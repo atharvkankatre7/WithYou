@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Background circle with gradient effect -->
+    <group
+        android:translateX="54"
+        android:translateY="54">
+        
+        <!-- Outer glow -->
+        <path
+            android:pathData="M0,-36 A36,36 0 1,1 0,36 A36,36 0 1,1 0,-36"
+            android:fillColor="#E91E63"
+            android:fillAlpha="0.3"/>
+        
+        <!-- Main circle -->
+        <path
+            android:pathData="M0,-30 A30,30 0 1,1 0,30 A30,30 0 1,1 0,-30"
+            android:fillColor="#E91E63"/>
+            
+        <!-- Gradient overlay (purple tint) -->
+        <path
+            android:pathData="M15,-26 A30,30 0 0,1 26,15 L0,0 Z"
+            android:fillColor="#7C3AED"
+            android:fillAlpha="0.4"/>
+        
+    </group>
+    
+    <!-- Heart icon -->
+    <group
+        android:translateX="54"
+        android:translateY="52">
+        <path
+            android:pathData="M0,-12 C-3,-15 -9,-15 -12,-12 C-15,-9 -15,-3 -12,0 L0,12 L12,0 C15,-3 15,-9 12,-12 C9,-15 3,-15 0,-12 Z"
+            android:fillColor="#FFFFFF"/>
+    </group>
+    
+    <!-- Play triangle overlay -->
+    <group
+        android:translateX="56"
+        android:translateY="54">
+        <path
+            android:pathData="M-4,-6 L-4,6 L6,0 Z"
+            android:fillColor="#FFFFFF"
+            android:fillAlpha="0.9"/>
+    </group>
+    
+</vector>
+

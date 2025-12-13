@@ -1,0 +1,132 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+.env.local
+.env.production
+dist/
+build/
+
+# Android
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+google-services.json
+keystore.properties
+
+# Android Studio
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Gradle
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+.gradle-wrapper/
+
+# Android Build
+android/app/build/
+android/app/release/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/google-services.json
+android/app/src/**/google-services.json
+android/app/*.jks
+android/app/*.keystore
+android/app/keystore.properties
+android/app/release/
+android/app/debug/
+
+# Firebase
+firebase-debug.log
+.firebase/
+google-services.json
+**/google-services.json
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# Secrets & Keys
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+keystore.properties
+sa.json
+service-account.json
+secrets.properties
+credentials.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Misc
+.cache/
+temp/
+tmp/
+*.tmp
+*.bak
+*.swp
+
+# Kotlin
+*.kotlin_module
+
+# Android NDK
+obj/
+.externalNativeBuild/
+.cxx/
+
+# Server (if Node.js backend)
+server/node_modules/
+server/.env
+server/dist/
+server/build/
+server/logs/
+server/uploads/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Database
+*.db
+*.sqlite
+*.sqlite3

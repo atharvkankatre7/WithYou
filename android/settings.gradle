@@ -1,0 +1,23 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        google()
+        mavenCentral()
+        // JitPack for community libraries
+        maven { url 'https://jitpack.io' }
+        // Sonatype for FFmpegKit
+        maven { url 'https://oss.sonatype.org/content/repositories/releases/' }
+    }
+}
+
+rootProject.name = "ContentSync"
+include ':app'
+

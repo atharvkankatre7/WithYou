@@ -1,0 +1,22 @@
+// Top-level build file
+buildscript {
+    ext.kotlin_version = '1.9.22'
+    ext.compose_version = '1.6.1'
+    ext.compose_compiler_version = '1.5.10'
+    
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.3.0'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath 'com.google.gms:google-services:4.4.1'
+    }
+}
+
+plugins {
+    id 'com.android.application' version '8.3.0' apply false
+    id 'com.android.library' version '8.3.0' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}
