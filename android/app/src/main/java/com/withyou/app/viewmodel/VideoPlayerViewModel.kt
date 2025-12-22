@@ -1,7 +1,6 @@
 package com.withyou.app.viewmodel
 
 import android.app.Application
-import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.withyou.app.player.AspectMode
@@ -17,9 +16,6 @@ import kotlinx.coroutines.launch
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 import timber.log.Timber
-import java.io.File
-import java.io.FileWriter
-import java.io.PrintWriter
 
 /**
  * VideoPlayerViewModel - Bridge between UI and PlayerEngine
@@ -227,15 +223,6 @@ class VideoPlayerViewModel(application: Application) : AndroidViewModel(applicat
      * @param isHost Whether user is host (has permission to control)
      */
     fun togglePlayPause(isHost: Boolean = true) {
-        // #region agent log
-        try {
-            val logFile = File(getApplication<Application>().filesDir.parentFile, ".cursor/debug.log")
-            PrintWriter(FileWriter(logFile, true)).use { pw ->
-                pw.println("""{"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"VideoPlayerViewModel.kt:218","message":"togglePlayPause() entry","data":{"wasPlaying":${_uiState.value.isPlaying},"position":${_uiState.value.position},"duration":${_uiState.value.duration}},"timestamp":${System.currentTimeMillis()}}""")
-            }
-        } catch (e: Exception) {}
-        // #endregion
-        
         if (!canControlPlayback(isHost)) {
             Timber.d("VideoPlayerViewModel: togglePlayPause() blocked - isHost=$isHost, externalLocked=$externalLocked")
             return

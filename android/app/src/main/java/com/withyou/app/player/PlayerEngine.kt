@@ -15,9 +15,6 @@ import kotlinx.coroutines.launch
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 import timber.log.Timber
-import java.io.File
-import java.io.FileWriter
-import java.io.PrintWriter
 
 /**
  * PlayerEngine - Direct wrapper around LibVLC MediaPlayer
@@ -189,15 +186,6 @@ class PlayerEngine(
      * Toggle play/pause state
      */
     fun togglePlayPause() {
-        // #region agent log
-        try {
-            val logFile = File(context.filesDir.parentFile, ".cursor/debug.log")
-            PrintWriter(FileWriter(logFile, true)).use { pw ->
-                pw.println("""{"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"PlayerEngine.kt:181","message":"togglePlayPause() entry","data":{"isPlaying":${player.isPlaying},"duration":${player.duration},"position":${player.position}},"timestamp":${System.currentTimeMillis()}}""")
-            }
-        } catch (e: Exception) {}
-        // #endregion
-        
         if (player.isPlaying) {
             pause()
         } else {
@@ -367,8 +355,11 @@ class PlayerEngine(
      * Release the player and free resources
      */
     fun release() {
-        scope.cancel()
-        player.release()
+        isReleased = true  // Mark as released before canceling scope
+        pollingJob?.cancel()  // Explicitly cancel polling job
+        scope.cancel()  // Cancel the entire scope
+        player.release()  // Release the underlying player
+        Timber.d("PlayerEngine: Released")
     }
     
     /**

@@ -4,6 +4,10 @@
 -keep class com.google.firebase.** { *; }
 -keep class com.google.android.gms.** { *; }
 
+# Keep LibVLC classes (critical for video playback)
+-keep class org.videolan.libvlc.** { *; }
+-keep class org.videolan.android.** { *; }
+
 # Keep ExoPlayer classes
 -keep class androidx.media3.** { *; }
 -dontwarn androidx.media3.**
@@ -30,6 +34,11 @@
 -keep class com.withyou.app.utils.FileMetadata { *; }
 -keep class com.withyou.app.utils.CodecInfo { *; }
 
+# Keep all ViewModels and data classes
+-keep class com.withyou.app.viewmodel.** { *; }
+-keep class com.withyou.app.player.** { *; }
+-keep class com.withyou.app.sync.** { *; }
+
 # Kotlin
 -keep class kotlin.Metadata { *; }
 -keepclassmembers class **$WhenMappings {
@@ -40,3 +49,11 @@
 -keepclassmembernames class kotlinx.** {
     volatile <fields>;
 }
+
+# Keep enum classes
+-keepclassmembers enum com.withyou.app.** {
+    <fields>;
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+

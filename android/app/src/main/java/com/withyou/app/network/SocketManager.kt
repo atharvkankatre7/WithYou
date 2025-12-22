@@ -419,6 +419,36 @@ class SocketManager(private val authToken: String) {
     }
     
     /**
+     * Send ping for RTT measurement
+     */
+    fun sendPing(nonce: Long, clientTs: Long, onResponse: (Long) -> Unit) {
+        try {
+            lastPingNonce = nonce.toString()
+            lastPingSentAt = clientTs
+            
+            val data = JSONObject().apply {
+                put("nonce", nonce)
+                put("ts", clientTs)
+            }
+            
+            // Set up one-time pong listener
+            socket?.once("pong") { args ->
+                val response = args.firstOrNull() as? JSONObject
+                if (response != null && response.optString("nonce") == nonce.toString()) {
+                    val rtt = System.currentTimeMillis() - lastPingSentAt
+                    currentRtt = rtt
+                    onResponse(rtt)
+                    Timber.v("Ping response received: RTT = ${rtt}ms")
+                }
+            }
+            
+            socket?.emit("ping", data)
+        } catch (e: Exception) {
+            Timber.e(e, "Error sending ping")
+        }
+    }
+    
+    /**
      * Disconnect socket
      */
     fun disconnect() {

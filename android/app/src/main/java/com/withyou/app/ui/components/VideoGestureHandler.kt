@@ -62,6 +62,12 @@ data class GestureState(
  * - Vertical swipe on right side for volume
  * - Single tap to toggle controls
  * 
+ * PERFORMANCE OPTIMIZATIONS:
+ * - Uses rememberUpdatedState for position/duration to prevent gesture detector recreation on every frame update
+ * - pointerInput keys are minimal (isHost, isLocked, Unit) to prevent unnecessary recreation
+ * - Gesture state is remembered across recompositions
+ * - Uses mutableStateOf for gesture state to avoid full recomposition of gesture handlers
+ * 
  * LOCK MODE: When isHost=false or isLocked=true, gestures are disabled except unlock tap.
  */
 @Composable
@@ -193,12 +199,12 @@ fun VideoGestureHandler(
         Row(
             modifier = Modifier.fillMaxSize()
         ) {
-            // LEFT 35% – rewind (single tap + double tap)
+            // LEFT 35% – rewind (single tap + double tap + brightness drag)
             Box(
                 modifier = Modifier
                     .weight(3.5f)
                     .fillMaxHeight()
-                    .pointerInput(isHost) {
+                    .pointerInput(isHost, isLocked) {
                         detectTapGestures(
                             onTap = {
                                 // Single tap → toggle controls

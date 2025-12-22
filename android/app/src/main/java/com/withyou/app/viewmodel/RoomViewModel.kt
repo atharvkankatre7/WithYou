@@ -81,6 +81,9 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
     private val _connectionStatus = MutableStateFlow("Disconnected")
     val connectionStatus: StateFlow<String> = _connectionStatus.asStateFlow()
     
+    private val _rttMs = MutableStateFlow(0L)
+    val rttMs: StateFlow<Long> = _rttMs.asStateFlow()
+    
     private val _syncStatus = MutableStateFlow("Not synced")
     val syncStatus: StateFlow<String> = _syncStatus.asStateFlow()
     
@@ -106,6 +109,7 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
     private var pingJob: Job? = null
     private var playerListenerJob: Job? = null
     private var positionSyncJob: Job? = null
+    private var rttMeasurementJob: Job? = null
     
     // App lifecycle tracking
     private var isAppInBackground = false
@@ -115,9 +119,11 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
                 Lifecycle.Event.ON_STOP -> {
                     // App went to background
                     isAppInBackground = true
-                    Timber.i("App went to background - pausing video but keeping room active")
+                    Timber.i("App went to background - suspending polling and pausing video")
                     sharedPlayerEngine?.let { engine ->
-                        // Pause video but keep socket connected
+                        // Suspend polling to save battery and CPU
+                        engine.suspendPolling()
+                        // Pause video but keep socket connected for sync
                         engine.pause()
                     }
                 }
@@ -125,8 +131,12 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
                     // App came to foreground
                     if (isAppInBackground) {
                         isAppInBackground = false
-                        Timber.i("App came to foreground - room still active")
-                        // Don't auto-play, let user control
+                        Timber.i("App came to foreground - resuming polling")
+                        sharedPlayerEngine?.let { engine ->
+                            // Resume polling to sync with host position updates
+                            engine.resumePolling()
+                            // Don't auto-play - let user control with play button
+                        }
                     }
                 }
                 else -> {}
@@ -468,6 +478,13 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
             is SocketEvent.HostDisconnected -> {
                 Timber.w("Host disconnected: ${event.message} (grace period: ${event.gracePeriodMs}ms)")
                 _connectionStatus.value = "Host Disconnected (Reconnecting...)"
+                
+                // Pause playback on host disconnect to prevent desync
+                // Player will resume when host reconnects
+                if (!isHost) {
+                    sharedPlayerEngine?.pause()
+                    Timber.i("Playback paused due to host disconnection")
+                }
             }
             is SocketEvent.HostReconnected -> {
                 Timber.i("Sync: Host reconnected: ${event.message}")
@@ -560,18 +577,6 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
     @Deprecated("Replaced by PlaybackSyncController")
     private fun startPositionSyncLoop(roomId: String) {
         // No-op - sync is now handled by PlaybackSyncController
-    }
-    
-    /**
-     * Start ping loop for RTT measurement
-     */
-    private fun startPingLoop() {
-        pingJob = viewModelScope.launch {
-            while (isActive) {
-                socketManager?.sendPing()
-                delay(5000) // Ping every 5 seconds
-            }
-        }
     }
     
     /**
@@ -743,6 +748,32 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     /**
+     * Start RTT measurement ping loop
+     * Periodically sends ping events to measure network latency
+     * Results are stored in _rttMs for display/monitoring
+     */
+    private fun startPingLoop() {
+        rttMeasurementJob = viewModelScope.launch {
+            var nonce = 0L
+            while (isActive) {
+                try {
+                    delay(5000) // Ping every 5 seconds
+                    val ts = System.currentTimeMillis()
+                    nonce++
+                    socketManager?.sendPing(nonce, ts) { rtt ->
+                        // Update RTT display
+                        _rttMs.value = rtt
+                        syncController?.updateRtt(rtt)
+                        Timber.d("RTT measured: ${rtt}ms")
+                    }
+                } catch (e: Exception) {
+                    Timber.w("Error sending ping: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    /**
      * Reset state to idle (cancel file selection)
      */
     fun resetState() {
@@ -762,6 +793,10 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
         pingJob?.cancel()
         playerListenerJob?.cancel()
         positionSyncJob?.cancel()
+        rttMeasurementJob?.cancel()
+        
+        // Suspend polling to free resources
+        sharedPlayerEngine?.suspendPolling()
         
         // Only disconnect socket if explicitly leaving room (not just backgrounding)
         // socketManager?.disconnect()  // Commented out to keep connection alive

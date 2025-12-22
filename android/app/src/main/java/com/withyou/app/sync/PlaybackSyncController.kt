@@ -14,8 +14,8 @@ import timber.log.Timber
  * 
  * OUTGOING (Host sends to server):
  * - State changes (play/pause): Monitors PlayerEngine state and sends hostPlay/hostPause
- * - Position updates: Periodic loop (every 1 second) sends hostTimeSync when playing
- * - Seek events: Sends hostSeek when host seeks
+ * - Position updates: Sends hostTimeSync periodically (~500ms when playing) for smooth sync
+ * - Seek events: Sends hostSeek when host seeks (debounced to prevent spam on rapid scrubbing)
  * - Speed changes: Sends hostSpeedChange when playback rate changes
  * 
  * INCOMING (Follower receives from server):
@@ -23,12 +23,13 @@ import timber.log.Timber
  * - applyRemotePause(): Applies pause command with position sync
  * - applyRemoteSeek(): Applies seek command
  * - applyRemoteRate(): Applies playback rate change
- * - applyTimeSync(): Continuous position sync during playback
+ * - applyTimeSync(): Continuous position sync during playback (with drift tolerance)
  * 
  * CONFLICT HANDLING:
  * - If isHost == false, never send outgoing play/pause/seek; only apply incoming commands
  * - If isHost == true, outgoing actions are sent to server; incoming actions may be ignored if they conflict
- * - Local user scrubbing temporarily blocks incoming seek events (1-2 second window)
+ * - Local user scrubbing temporarily blocks incoming seek events (2-second window)
+ * - Seek events are coalesced to avoid spam during rapid scrubbing
  */
 class PlaybackSyncController(
     private val playerEngine: PlayerEngine,
@@ -43,6 +44,12 @@ class PlaybackSyncController(
     private var isUserScrubbing: Boolean = false
     private var scrubbingEndTime: Long = 0
     private val SCRUBBING_BLOCK_WINDOW_MS = 2000L // Ignore incoming seeks for 2 seconds after local scrub
+    
+    // Seek debounce - coalesce rapid seeks to prevent spam on fast scrubbing
+    private var lastSeekTime: Long = 0
+    private var pendingSeekMs: Long? = null
+    private var seekDebounceJob: Job? = null
+    private val SEEK_DEBOUNCE_MS = 200L // Coalesce seeks within 200ms window
     
     // State observation jobs
     private var stateObservationJob: Job? = null
@@ -97,10 +104,10 @@ class PlaybackSyncController(
             }
         }
         
-        // Periodic position sync (every 1 second when playing)
+        // Periodic position sync (every 500ms when playing for smoother sync)
         positionSyncJob = scope.launch {
             while (isActive) {
-                delay(1000)
+                delay(500)
                 if (isHost && playerEngine.isPlaying.value) {
                     val positionSec = playerEngine.position.value / 1000.0
                     socketManager?.hostTimeSync(roomId ?: return@launch, positionSec, true)
@@ -123,6 +130,8 @@ class PlaybackSyncController(
     
     /**
      * Send seek event (called when host seeks)
+     * Implements debouncing to coalesce rapid seeks (e.g., during fast scrubbing)
+     * If rapid seeks occur, only the final position is sent to the server
      */
     fun sendSeekEvent(positionMs: Long) {
         if (!isHost) {
@@ -130,9 +139,27 @@ class PlaybackSyncController(
             return
         }
         
-        val positionSec = positionMs / 1000.0
-        Timber.i("Sync: Host seek - sending hostSeek: position=$positionSec")
-        socketManager?.hostSeek(roomId ?: return, positionSec)
+        val now = System.currentTimeMillis()
+        lastSeekTime = now
+        pendingSeekMs = positionMs
+        
+        // Cancel existing debounce job
+        seekDebounceJob?.cancel()
+        
+        // Start new debounce job - wait for SEEK_DEBOUNCE_MS before sending
+        // If another seek arrives within that window, this job restarts
+        seekDebounceJob = scope.launch {
+            delay(SEEK_DEBOUNCE_MS)
+            
+            // Send the final pending seek
+            val finalPositionMs = pendingSeekMs ?: return@launch
+            val positionSec = finalPositionMs / 1000.0
+            
+            Timber.i("Sync: Debounced host seek - sending hostSeek: position=$positionSec (coalesced rapid seeks)")
+            socketManager?.hostSeek(roomId ?: return@launch, positionSec)
+            
+            pendingSeekMs = null
+        }
     }
     
     /**
@@ -224,11 +251,12 @@ class PlaybackSyncController(
     
     /**
      * Mark that user finished scrubbing (allows incoming seeks after window)
+     * This is called AFTER the user releases the seek bar
      */
     fun onUserScrubbingEnd() {
         isUserScrubbing = false
         scrubbingEndTime = System.currentTimeMillis()
-        Timber.d("Sync: User scrubbing ended - will allow incoming seeks after ${SCRUBBING_BLOCK_WINDOW_MS}ms")
+        Timber.d("Sync: User scrubbing ended at ${scrubbingEndTime} - will allow incoming seeks after ${SCRUBBING_BLOCK_WINDOW_MS}ms")
     }
     
     /**
@@ -269,6 +297,7 @@ class PlaybackSyncController(
         stateObservationJob?.cancel()
         positionSyncJob?.cancel()
         rateObservationJob?.cancel()
+        seekDebounceJob?.cancel()
         syncEngine?.release()
         syncEngine = null
         Timber.d("PlaybackSyncController: Released")

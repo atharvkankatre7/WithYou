@@ -45,6 +45,9 @@ object VideoGrouping {
     // Number of recent videos to show in "Recently Added" folder
     private const val RECENTLY_ADDED_COUNT = 20
     
+    // Duration threshold for filename-based grouping priority (20 minutes in milliseconds)
+    private const val FILENAME_PRIORITY_DURATION_MS = 20 * 60 * 1000L // 20 minutes
+    
     // Common TV show patterns
     private val TV_SHOW_PATTERNS = listOf(
         // "Stranger Things S01E01" or "Stranger Things Season 1 Episode 1"
@@ -71,8 +74,10 @@ object VideoGrouping {
     
     /**
      * Group videos by source and naming patterns
-     * Priority: Recently Added > Source-based > Filename-based
-     * This ensures all videos from the same source (Camera, WhatsApp, etc.) are grouped together first
+     * Priority logic:
+     * - Videos > 20 minutes: Filename-based grouping first (TV shows/movies)
+     * - Videos <= 20 minutes: Source-based grouping first (Camera, WhatsApp, etc.)
+     * - Recently Added folder always appears first
      */
     fun groupVideos(videos: List<VideoFile>): List<VideoGroup> {
         // Step 1: Create "Recently Added" folder (most recent videos, regardless of grouping)
@@ -80,13 +85,35 @@ object VideoGrouping {
             .sortedByDescending { it.dateAdded }
             .take(RECENTLY_ADDED_COUNT)
         
-        // Step 2: Apply source-based grouping FIRST (highest priority after Recently Added)
-        val sourceGroups = mutableMapOf<String, MutableList<VideoFile>>()
-        val sourceGroupMetadata = mutableMapOf<String, VideoGroupType>()
-        val videosInSourceGroups = mutableSetOf<VideoFile>() // Track which videos are grouped by source
+        // Step 2: Split videos by duration
+        val longVideos = videos.filter { it.duration > FILENAME_PRIORITY_DURATION_MS } // > 20 minutes
+        val shortVideos = videos.filter { it.duration <= FILENAME_PRIORITY_DURATION_MS } // <= 20 minutes
         
-        videos.forEach { video ->
-            // Detect source
+        // Step 3: Group long videos (filename-based first, then source-based)
+        val longFilenameGroups = mutableMapOf<String, MutableList<VideoFile>>()
+        val longFilenameMetadata = mutableMapOf<String, Pair<VideoGroupType, Int?>>()
+        val longVideosInFilenameGroups = mutableSetOf<VideoFile>()
+        
+        longVideos.forEach { video ->
+            val (groupKey, type, season) = extractGroupInfo(video.name)
+            if (groupKey.isNotEmpty() && type != VideoGroupType.UNKNOWN) {
+                if (!longFilenameGroups.containsKey(groupKey)) {
+                    longFilenameGroups[groupKey] = mutableListOf()
+                    longFilenameMetadata[groupKey] = Pair(type, season)
+                }
+                longFilenameGroups[groupKey]?.add(video)
+                longVideosInFilenameGroups.add(video)
+            }
+        }
+        
+        // Long videos not in filename groups go to source-based groups
+        val longSourceGroups = mutableMapOf<String, MutableList<VideoFile>>()
+        val longSourceMetadata = mutableMapOf<String, VideoGroupType>()
+        
+        longVideos.forEach { video ->
+            if (longVideosInFilenameGroups.contains(video)) {
+                return@forEach
+            }
             val sourceType = detectSource(video)
             val sourceKey = when (sourceType) {
                 VideoGroupType.CAMERA -> "Camera"
@@ -97,56 +124,118 @@ object VideoGrouping {
                 VideoGroupType.DOWNLOADS -> "Downloads"
                 else -> "Other"
             }
-            
-            // Only group by source if it's not "Other" (we'll handle "Other" separately)
             if (sourceType != VideoGroupType.OTHER) {
-                if (!sourceGroups.containsKey(sourceKey)) {
-                    sourceGroups[sourceKey] = mutableListOf()
-                    sourceGroupMetadata[sourceKey] = sourceType
+                if (!longSourceGroups.containsKey(sourceKey)) {
+                    longSourceGroups[sourceKey] = mutableListOf()
+                    longSourceMetadata[sourceKey] = sourceType
                 }
-                sourceGroups[sourceKey]?.add(video)
-                videosInSourceGroups.add(video)
+                longSourceGroups[sourceKey]?.add(video)
             }
         }
         
-        // Step 3: Apply filename-based grouping (only for videos NOT already grouped by source)
-        val filenameGroups = mutableMapOf<String, MutableList<VideoFile>>()
-        val filenameGroupMetadata = mutableMapOf<String, Pair<VideoGroupType, Int?>>()
+        // Step 4: Group short videos (source-based first, then filename-based)
+        val shortSourceGroups = mutableMapOf<String, MutableList<VideoFile>>()
+        val shortSourceMetadata = mutableMapOf<String, VideoGroupType>()
+        val shortVideosInSourceGroups = mutableSetOf<VideoFile>()
         
-        videos.forEach { video ->
-            // Skip if already grouped by source
-            if (videosInSourceGroups.contains(video)) {
+        shortVideos.forEach { video ->
+            val sourceType = detectSource(video)
+            val sourceKey = when (sourceType) {
+                VideoGroupType.CAMERA -> "Camera"
+                VideoGroupType.SCREEN_RECORDING -> "Screen Recordings"
+                VideoGroupType.WHATSAPP -> "WhatsApp"
+                VideoGroupType.TELEGRAM -> "Telegram"
+                VideoGroupType.INSTAGRAM -> "Instagram"
+                VideoGroupType.DOWNLOADS -> "Downloads"
+                else -> "Other"
+            }
+            if (sourceType != VideoGroupType.OTHER) {
+                if (!shortSourceGroups.containsKey(sourceKey)) {
+                    shortSourceGroups[sourceKey] = mutableListOf()
+                    shortSourceMetadata[sourceKey] = sourceType
+                }
+                shortSourceGroups[sourceKey]?.add(video)
+                shortVideosInSourceGroups.add(video)
+            }
+        }
+        
+        // Short videos not in source groups can be grouped by filename
+        val shortFilenameGroups = mutableMapOf<String, MutableList<VideoFile>>()
+        val shortFilenameMetadata = mutableMapOf<String, Pair<VideoGroupType, Int?>>()
+        
+        shortVideos.forEach { video ->
+            if (shortVideosInSourceGroups.contains(video)) {
                 return@forEach
             }
-            
             val (groupKey, type, season) = extractGroupInfo(video.name)
-            
             if (groupKey.isNotEmpty() && type != VideoGroupType.UNKNOWN) {
-                // This video matches a filename pattern (TV show or movie)
-                if (!filenameGroups.containsKey(groupKey)) {
-                    filenameGroups[groupKey] = mutableListOf()
-                    filenameGroupMetadata[groupKey] = Pair(type, season)
+                if (!shortFilenameGroups.containsKey(groupKey)) {
+                    shortFilenameGroups[groupKey] = mutableListOf()
+                    shortFilenameMetadata[groupKey] = Pair(type, season)
                 }
-                filenameGroups[groupKey]?.add(video)
+                shortFilenameGroups[groupKey]?.add(video)
             }
         }
         
-        // Step 4: Group remaining videos (not in source groups, not matching filename patterns) into "Other"
-        val otherVideos = videos.filter { 
-            !videosInSourceGroups.contains(it) && 
-            !filenameGroups.values.flatten().contains(it)
+        // Step 5: Merge source groups from long and short videos
+        val allSourceGroups = mutableMapOf<String, MutableList<VideoFile>>()
+        val allSourceMetadata = mutableMapOf<String, VideoGroupType>()
+        
+        // Add short video source groups
+        shortSourceGroups.forEach { (key, videoList) ->
+            if (!allSourceGroups.containsKey(key)) {
+                allSourceGroups[key] = mutableListOf()
+                allSourceMetadata[key] = shortSourceMetadata[key] ?: VideoGroupType.OTHER
+            }
+            allSourceGroups[key]?.addAll(videoList)
         }
         
+        // Add long video source groups
+        longSourceGroups.forEach { (key, videoList) ->
+            if (!allSourceGroups.containsKey(key)) {
+                allSourceGroups[key] = mutableListOf()
+                allSourceMetadata[key] = longSourceMetadata[key] ?: VideoGroupType.OTHER
+            }
+            allSourceGroups[key]?.addAll(videoList)
+        }
+        
+        // Step 6: Merge filename groups from long and short videos
+        val allFilenameGroups = mutableMapOf<String, MutableList<VideoFile>>()
+        val allFilenameMetadata = mutableMapOf<String, Pair<VideoGroupType, Int?>>()
+        
+        // Add long video filename groups (these have priority)
+        longFilenameGroups.forEach { (key, videoList) ->
+            allFilenameGroups[key] = videoList.toMutableList()
+            allFilenameMetadata[key] = longFilenameMetadata[key] ?: Pair(VideoGroupType.UNKNOWN, null)
+        }
+        
+        // Add short video filename groups (only if not already exists)
+        shortFilenameGroups.forEach { (key, videoList) ->
+            if (!allFilenameGroups.containsKey(key)) {
+                allFilenameGroups[key] = videoList.toMutableList()
+                allFilenameMetadata[key] = shortFilenameMetadata[key] ?: Pair(VideoGroupType.UNKNOWN, null)
+            } else {
+                // Merge into existing group
+                allFilenameGroups[key]?.addAll(videoList)
+            }
+        }
+        
+        // Step 7: Group remaining videos into "Other"
+        val allGroupedVideos = mutableSetOf<VideoFile>()
+        allSourceGroups.values.forEach { allGroupedVideos.addAll(it) }
+        allFilenameGroups.values.forEach { allGroupedVideos.addAll(it) }
+        
+        val otherVideos = videos.filter { !allGroupedVideos.contains(it) }
         if (otherVideos.isNotEmpty()) {
-            sourceGroups["Other"] = otherVideos.toMutableList()
-            sourceGroupMetadata["Other"] = VideoGroupType.OTHER
+            allSourceGroups["Other"] = otherVideos.toMutableList()
+            allSourceMetadata["Other"] = VideoGroupType.OTHER
         }
         
         // Sort videos within each group
-        sourceGroups.forEach { (_, videoList) ->
+        allSourceGroups.forEach { (_, videoList) ->
             videoList.sortByDescending { it.dateAdded } // Sort by date for source groups
         }
-        filenameGroups.forEach { (_, videoList) ->
+        allFilenameGroups.forEach { (_, videoList) ->
             videoList.sortBy { it.name } // Sort by name for filename groups
         }
         
@@ -166,9 +255,23 @@ object VideoGrouping {
             )
         }
         
-        // 2. Source-based groups (Camera, WhatsApp, etc.) - NOW FIRST PRIORITY
-        sourceGroups.forEach { (key, videoList) ->
-            val type = sourceGroupMetadata[key] ?: VideoGroupType.OTHER
+        // 2. Filename-based groups from long videos (TV shows, movies > 20 min) - HIGHEST PRIORITY
+        longFilenameGroups.forEach { (key, videoList) ->
+            val (type, season) = longFilenameMetadata[key] ?: Pair(VideoGroupType.UNKNOWN, null)
+            resultGroups.add(
+                VideoGroup(
+                    type = type,
+                    title = key,
+                    season = season,
+                    videos = videoList,
+                    thumbnailUri = videoList.firstOrNull()?.uri
+                )
+            )
+        }
+        
+        // 3. Source-based groups (Camera, WhatsApp, etc.) - for short videos and long videos not in filename groups
+        allSourceGroups.forEach { (key, videoList) ->
+            val type = allSourceMetadata[key] ?: VideoGroupType.OTHER
             resultGroups.add(
                 VideoGroup(
                     type = type,
@@ -180,18 +283,21 @@ object VideoGrouping {
             )
         }
         
-        // 3. Filename-based groups (TV shows, movies) - only for videos not in source groups
-        filenameGroups.forEach { (key, videoList) ->
-            val (type, season) = filenameGroupMetadata[key] ?: Pair(VideoGroupType.UNKNOWN, null)
-            resultGroups.add(
-                VideoGroup(
-                    type = type,
-                    title = key,
-                    season = season,
-                    videos = videoList,
-                    thumbnailUri = videoList.firstOrNull()?.uri
+        // 4. Filename-based groups from short videos (only if not already in a group)
+        shortFilenameGroups.forEach { (key, videoList) ->
+            // Only add if not already added from long videos
+            if (!longFilenameGroups.containsKey(key)) {
+                val (type, season) = shortFilenameMetadata[key] ?: Pair(VideoGroupType.UNKNOWN, null)
+                resultGroups.add(
+                    VideoGroup(
+                        type = type,
+                        title = key,
+                        season = season,
+                        videos = videoList,
+                        thumbnailUri = videoList.firstOrNull()?.uri
+                    )
                 )
-            )
+            }
         }
         
         // Sort groups by priority (source-based groups come before filename-based groups)

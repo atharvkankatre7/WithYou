@@ -7,11 +7,16 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -499,6 +504,8 @@ private fun VideoThumbnail(
     val scope = rememberCoroutineScope()
     var thumbnailBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var isLoadingThumbnail by remember { mutableStateOf(true) }
+    var showTooltip by remember { mutableStateOf(false) }
+    var isLongPressing by remember { mutableStateOf(false) }
     
     // Load thumbnail
     LaunchedEffect(video.uri) {
@@ -521,12 +528,41 @@ private fun VideoThumbnail(
         }
     }
     
+    // Auto-dismiss tooltip when long press is released
+    LaunchedEffect(isLongPressing) {
+        if (!isLongPressing && showTooltip) {
+            kotlinx.coroutines.delay(100) // Small delay for smooth transition
+            showTooltip = false
+        }
+    }
+    
     Box(
         modifier = Modifier
             .size(size)
             .clip(RoundedCornerShape(8.dp))
             .background(Color.Gray.copy(alpha = 0.2f))
-            .clickable(onClick = onClick)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onLongPress = {
+                        isLongPressing = true
+                        showTooltip = true
+                    },
+                    onTap = {
+                        if (!showTooltip) {
+                            onClick()
+                        } else {
+                            showTooltip = false
+                            isLongPressing = false
+                        }
+                    },
+                    onPress = {
+                        // Track press state
+                        isLongPressing = true
+                        awaitRelease()
+                        isLongPressing = false
+                    }
+                )
+            }
     ) {
         // Thumbnail image or placeholder
         if (thumbnailBitmap != null) {
@@ -600,6 +636,132 @@ private fun VideoThumbnail(
                 .padding(4.dp),
             tint = Color.White
         )
+        
+        // Video details tooltip on long press with smooth animation
+        AnimatedVisibility(
+            visible = showTooltip,
+            enter = fadeIn(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            ) + scaleIn(
+                initialScale = 0.8f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            ),
+            exit = fadeOut(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioHighBouncy,
+                    stiffness = Spring.StiffnessHigh
+                )
+            ) + scaleOut(
+                targetScale = 0.8f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioHighBouncy,
+                    stiffness = Spring.StiffnessHigh
+                )
+            ),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            VideoDetailsTooltip(
+                video = video,
+                onDismiss = { 
+                    showTooltip = false
+                    isLongPressing = false
+                },
+                modifier = Modifier
+            )
+        }
+    }
+}
+
+/**
+ * Tooltip showing video details (name, size, duration)
+ */
+@Composable
+private fun VideoDetailsTooltip(
+    video: VideoFile,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .padding(bottom = 8.dp)
+            .widthIn(max = 280.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.Black.copy(alpha = 0.95f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(16.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { onDismiss() }
+                    )
+                }
+        ) {
+            // Full video name
+            Text(
+                text = video.name,
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Divider(color = Color.White.copy(alpha = 0.2f))
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Duration
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    Icons.Default.AccessTime,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = formatDuration(video.duration),
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 13.sp
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // File size
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = formatFileSize(video.size),
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 13.sp
+                )
+            }
+        }
     }
 }
 
@@ -656,12 +818,45 @@ private fun VideoListItem(
     conversionStatus: MediaLibraryViewModel.ConversionStatus?,
     onClick: () -> Unit
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = SurfaceDark)
-    ) {
+    var showTooltip by remember { mutableStateOf(false) }
+    var isLongPressing by remember { mutableStateOf(false) }
+    
+    // Auto-dismiss tooltip when long press is released
+    LaunchedEffect(isLongPressing) {
+        if (!isLongPressing && showTooltip) {
+            kotlinx.coroutines.delay(100) // Small delay for smooth transition
+            showTooltip = false
+        }
+    }
+    
+    Box {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onLongPress = {
+                            isLongPressing = true
+                            showTooltip = true
+                        },
+                        onTap = {
+                            if (!showTooltip) {
+                                onClick()
+                            } else {
+                                showTooltip = false
+                                isLongPressing = false
+                            }
+                        },
+                        onPress = {
+                            // Track press state
+                            isLongPressing = true
+                            awaitRelease()
+                            isLongPressing = false
+                        }
+                    )
+                },
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark)
+        ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -700,6 +895,48 @@ private fun VideoListItem(
                 contentDescription = "Play",
                 tint = Color.White,
                 modifier = Modifier.size(24.dp)
+            )
+        }
+        }
+        
+        // Video details tooltip on long press with smooth animation
+        AnimatedVisibility(
+            visible = showTooltip,
+            enter = fadeIn(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            ) + scaleIn(
+                initialScale = 0.8f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            ),
+            exit = fadeOut(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioHighBouncy,
+                    stiffness = Spring.StiffnessHigh
+                )
+            ) + scaleOut(
+                targetScale = 0.8f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioHighBouncy,
+                    stiffness = Spring.StiffnessHigh
+                )
+            ),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 8.dp)
+        ) {
+            VideoDetailsTooltip(
+                video = video,
+                onDismiss = { 
+                    showTooltip = false
+                    isLongPressing = false
+                },
+                modifier = Modifier
             )
         }
     }

@@ -7,7 +7,14 @@ import kotlin.math.abs
 
 /**
  * Synchronization engine for LibVLC video playback
- * Implements the sync algorithm with nudge and hard seek
+ * Implements the sync algorithm with intelligent drift correction strategy:
+ * 
+ * - Large drift (>600ms): Hard seek for instant correction
+ * - Medium drift (100-600ms): Gentle nudge for smooth correction
+ * - Small drift (<100ms): Ignored (within natural tolerance window)
+ * 
+ * This prevents viewer from experiencing jerky jumps when drifts are tiny
+ * and provides smooth gradual catch-up for medium drifts.
  * 
  * Now works with PlayerEngine instead of LibVLCVideoPlayer directly.
  * This ensures sync uses the same player instance as the UI.
@@ -18,6 +25,8 @@ class LibVLCSyncEngine(
 ) {
     
     // Sync thresholds (in seconds)
+    // DRIFT_TOLERANCE: Ignore corrections smaller than this (natural network jitter)
+    private val DRIFT_TOLERANCE = 0.1  // 100ms - within this, no correction needed
     private val NUDGE_THRESHOLD_MIN = 0.1
     private val NUDGE_THRESHOLD_MAX = 0.6
     private val HARD_SEEK_THRESHOLD = 0.6
@@ -46,6 +55,7 @@ class LibVLCSyncEngine(
     
     /**
      * Handle host play event
+     * When host starts playing, sync viewer to host's position with smart drift tolerance
      */
     fun handleHostPlay(positionSec: Double, hostTimestampMs: Long, playbackRate: Float = 1.0f) {
         val now = System.currentTimeMillis()
@@ -61,23 +71,23 @@ class LibVLCSyncEngine(
         Timber.d("Play sync: expected=$expectedPosSec, current=$currentPosSec, diff=$diff")
         
         when {
-            abs(diff) > HARD_SEEK_THRESHOLD -> {
-                // Large difference - hard seek
-                Timber.i("Hard seek: diff=${diff}s")
+            // Skip small drifts - within natural tolerance
+            kotlin.math.abs(diff) <= DRIFT_TOLERANCE -> {
+                Timber.d("Play sync: Within tolerance, playing normally (diff=$diff <= $DRIFT_TOLERANCE)")
+                playerEngine.setRate(playbackRate)
+                playerEngine.play()
+            }
+            // Large difference - hard seek
+            kotlin.math.abs(diff) > HARD_SEEK_THRESHOLD -> {
+                Timber.i("Play sync: Hard seek (diff=${diff}s > $HARD_SEEK_THRESHOLD)")
                 hardSeek(expectedPosSec)
                 playerEngine.setRate(playbackRate)
                 playerEngine.play()
             }
-            abs(diff) > NUDGE_THRESHOLD_MIN -> {
-                // Small difference - gentle nudge
-                Timber.i("Nudge: diff=${diff}s")
-                nudge(diff)
-                playerEngine.setRate(playbackRate)
-                playerEngine.play()
-            }
+            // Medium difference - gentle nudge
             else -> {
-                // Within tolerance - just play
-                Timber.d("Within tolerance, playing normally")
+                Timber.i("Play sync: Nudge (diff=${diff}s)")
+                nudge(diff)
                 playerEngine.setRate(playbackRate)
                 playerEngine.play()
             }
@@ -88,6 +98,7 @@ class LibVLCSyncEngine(
     
     /**
      * Handle host pause event
+     * When host pauses, pause viewer and sync to exact pause position
      */
     fun handleHostPause(positionSec: Double, hostTimestampMs: Long) {
         val now = System.currentTimeMillis()
@@ -95,7 +106,7 @@ class LibVLCSyncEngine(
         val expectedPosSec = positionSec
         
         val currentPosSec = playerEngine.position.value / 1000.0
-        val diff = abs(expectedPosSec - currentPosSec)
+        val diff = kotlin.math.abs(expectedPosSec - currentPosSec)
         
         Timber.d("Pause sync: expected=$expectedPosSec, current=$currentPosSec, diff=$diff")
         
@@ -103,9 +114,12 @@ class LibVLCSyncEngine(
         cancelNudge()
         playerEngine.pause()
         
-        // If difference is significant, seek to expected position
-        if (diff > NUDGE_THRESHOLD_MIN) {
+        // If difference is significant (beyond drift tolerance), seek to expected position
+        if (diff > DRIFT_TOLERANCE) {
+            Timber.i("Pause sync: Seeking to exact position (diff=$diff > $DRIFT_TOLERANCE)")
             hardSeek(expectedPosSec)
+        } else {
+            Timber.d("Pause sync: Position within tolerance, no seek needed")
         }
         
         lastSyncTime = now
@@ -128,6 +142,8 @@ class LibVLCSyncEngine(
     
     /**
      * Handle time sync event
+     * This is the most frequent sync event (every ~500ms when playing)
+     * Uses drift tolerance to avoid unnecessary corrections for tiny drifts
      */
     fun handleTimeSync(positionSec: Double, hostTimestampMs: Long) {
         val now = System.currentTimeMillis()
@@ -147,15 +163,21 @@ class LibVLCSyncEngine(
         Timber.d("Time sync: expected=$expectedPosSec, current=$currentPosSec, diff=$diff")
         
         when {
-            abs(diff) > HARD_SEEK_THRESHOLD -> {
-                // Large difference - hard seek
+            // Skip small drifts (within tolerance) - natural network jitter
+            kotlin.math.abs(diff) <= DRIFT_TOLERANCE -> {
+                Timber.v("Time sync: Drift within tolerance (${kotlin.math.abs(diff)}s <= ${DRIFT_TOLERANCE}s), no correction needed")
+                // No correction needed - drift is natural
+            }
+            // Large difference - hard seek
+            kotlin.math.abs(diff) > HARD_SEEK_THRESHOLD -> {
+                Timber.i("Hard seek: diff=${diff}s (exceeded hard threshold)")
                 hardSeek(expectedPosSec)
             }
-            abs(diff) > NUDGE_THRESHOLD_MIN -> {
-                // Small difference - gentle nudge
+            // Medium difference - gentle nudge for smooth catch-up
+            kotlin.math.abs(diff) > NUDGE_THRESHOLD_MIN -> {
+                Timber.i("Nudge: diff=${diff}s (smooth correction)")
                 nudge(diff)
             }
-            // Otherwise, within tolerance - no adjustment needed
         }
         
         lastSyncTime = now
