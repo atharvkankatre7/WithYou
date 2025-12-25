@@ -27,16 +27,13 @@ android {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            
-            buildConfigField "String", "SERVER_URL", "\"https://api.contentsync.com\""
-            buildConfigField "String", "SOCKET_URL", "\"wss://api.contentsync.com\""
+            buildConfigField "String", "SERVER_URL", "\"https://withyou-7p1i.onrender.com\""
+            buildConfigField "String", "SOCKET_URL", "\"wss://withyou-7p1i.onrender.com\""
         }
         debug {
             debuggable true
-            
-            // Use local IP for physical device testing
-            buildConfigField "String", "SERVER_URL", "\"http://10.202.185.188:3000\""
-            buildConfigField "String", "SOCKET_URL", "\"ws://10.202.185.188:3000\""
+            buildConfigField "String", "SERVER_URL", "\"https://withyou-7p1i.onrender.com\""
+            buildConfigField "String", "SOCKET_URL", "\"wss://withyou-7p1i.onrender.com\""
         }
     }
 

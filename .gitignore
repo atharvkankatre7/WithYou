@@ -84,6 +84,7 @@ Desktop.ini
 *.jks
 *.keystore
 keystore.properties
+sa.json
 service-account.json
 secrets.properties
 credentials.json
@@ -129,4 +130,3 @@ docker-compose.override.yml
 *.db
 *.sqlite
 *.sqlite3
-"server/sa.json" 

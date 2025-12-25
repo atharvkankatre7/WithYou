@@ -2,9 +2,17 @@ package com.withyou.app
 
 import android.app.Application
 import com.google.firebase.FirebaseApp
+import com.withyou.app.network.ApiClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 class ContentSyncApplication : Application() {
+    
+    // Application-scoped coroutine scope
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     override fun onCreate() {
         super.onCreate()
@@ -22,6 +30,13 @@ class ContentSyncApplication : Application() {
         FirebaseApp.initializeApp(this)
         
         Timber.d("ContentSync Application started")
+        
+        // Wake up server in background (Render free tier spins down after 15 min)
+        // This pre-warms the server so room creation is faster
+        applicationScope.launch {
+            Timber.d("Waking up server (cold start prevention)...")
+            ApiClient.healthCheck()
+        }
     }
     
     /**

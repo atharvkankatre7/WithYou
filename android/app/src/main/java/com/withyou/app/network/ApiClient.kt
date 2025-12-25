@@ -22,12 +22,40 @@ import java.util.concurrent.TimeUnit
  */
 class ApiClient(private val authToken: String) {
     
+    companion object {
+        private val sharedClient = OkHttpClient.Builder()
+            .connectTimeout(90, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .writeTimeout(90, TimeUnit.SECONDS)
+            .build()
+        
+        /**
+         * Check server health / wake up server from cold start
+         * Call this early (e.g., on app launch) to avoid timeout when creating room
+         * @return true if server is healthy, false if unreachable
+         */
+        suspend fun healthCheck(): Boolean = withContext(Dispatchers.IO) {
+            try {
+                val url = "${BuildConfig.SERVER_URL}/health"
+                val request = Request.Builder()
+                    .url(url)
+                    .get()
+                    .build()
+                
+                Timber.d("Performing health check to wake up server...")
+                val response = sharedClient.newCall(request).execute()
+                val isHealthy = response.isSuccessful
+                Timber.i("Server health check: ${if (isHealthy) "OK" else "FAILED"}")
+                isHealthy
+            } catch (e: Exception) {
+                Timber.w("Server health check failed: ${e.message}")
+                false
+            }
+        }
+    }
+    
     private val gson = Gson()
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private val client = sharedClient
     
     /**
      * Create a new room
@@ -96,7 +124,7 @@ class ApiClient(private val authToken: String) {
         } catch (e: SocketTimeoutException) {
             Timber.e(e, "Connection timeout when creating room")
             throw ApiException(
-                "Connection timeout. The server took too long to respond. Please try again.",
+                "Connection timeout. The server may be starting up (cold start). Please wait a moment and try again.",
                 0
             )
         } catch (e: UnknownHostException) {
