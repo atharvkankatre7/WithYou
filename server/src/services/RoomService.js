@@ -70,14 +70,14 @@ class RoomService {
 
     // Try database first, fallback to in-memory
     const useDatabase = pool() && pool()?._connected;
-    
+
     try {
       // Generate unique room ID
       let roomId;
       let attempts = 0;
       while (attempts < 10) {
         roomId = this.generateRoomId();
-        
+
         if (useDatabase) {
           const client = await getClient();
           try {
@@ -170,7 +170,7 @@ class RoomService {
         );
         return result.rows[0];
       }
-      
+
       // Fallback to in-memory
       return inMemoryRooms.get(roomId);
     } catch (error) {
@@ -203,10 +203,10 @@ class RoomService {
       logger.info('Room closed', { roomId });
       return true;
     } catch (error) {
-      logger.error('Error closing room', { 
+      logger.error('Error closing room', {
         error: error.message,
         code: error.code,
-        roomId 
+        roomId
       });
       // Don't throw - return false to indicate failure
       // This prevents server crashes on database errors
@@ -258,6 +258,24 @@ class RoomService {
   }
 
   /**
+   * Update participant connection status (by User ID)
+   */
+  static async updateParticipantStatus(roomId, userId, isConnected) {
+    try {
+      if (pool() && pool()?._connected) {
+        await query(
+          `UPDATE participants 
+           SET is_connected = $3, left_at = ${isConnected ? 'NULL' : 'NOW()'}, joined_at = ${isConnected ? 'NOW()' : 'joined_at'}
+           WHERE room_id = $1 AND user_id = $2`,
+          [roomId, userId, isConnected]
+        );
+      }
+    } catch (error) {
+      logger.error('Error updating participant status', { error: error.message, roomId, userId });
+    }
+  }
+
+  /**
    * Get participants in room
    */
   static async getParticipants(roomId) {
@@ -304,11 +322,11 @@ class RoomService {
          SET is_active = FALSE, closed_at = NOW()
          WHERE is_active = TRUE AND expires_at < NOW()`
       );
-      
+
       if (result.rowCount > 0) {
         logger.info('Cleaned up expired rooms', { count: result.rowCount });
       }
-      
+
       return result.rowCount;
     } catch (error) {
       logger.error('Error cleaning up expired rooms', { error: error.message });

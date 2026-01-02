@@ -10,15 +10,20 @@ const RoomService = require('../services/RoomService');
 const activeRooms = new Map(); // roomId -> { hostSocketId, hostUserId, participants: Map<socketId, userData>, hostDisconnectedAt: timestamp }
 const HOST_RECONNECT_GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes grace period for host reconnection
 
+// Global IO instance for external access
+let ioInstance;
+
 /**
  * Setup all Socket.IO event handlers
  * @param {Server} io - Socket.IO server instance
  */
 function setupSocketHandlers(io) {
+  ioInstance = io;
   io.on('connection', (socket) => {
-    logger.info('Client connected', { 
-      socketId: socket.id, 
-      userId: socket.user.uid 
+
+    logger.info('Client connected', {
+      socketId: socket.id,
+      userId: socket.user.uid
     });
 
     // Join room
@@ -41,8 +46,8 @@ function setupSocketHandlers(io) {
 
         // Verify file hash matches for followers
         if (role === 'follower' && file_hash !== room.host_file_hash) {
-          socket.emit('error', { 
-            code: 'FILE_MISMATCH', 
+          socket.emit('error', {
+            code: 'FILE_MISMATCH',
             message: 'File hash does not match. Ensure you selected the same file as the host.',
             expected: room.host_file_hash,
             received: file_hash
@@ -68,18 +73,18 @@ function setupSocketHandlers(io) {
         if (role === 'host') {
           // Verify this is the actual host user
           if (roomData.hostUserId !== socket.user.uid) {
-            socket.emit('error', { 
-              code: 'UNAUTHORIZED', 
-              message: 'Only the original host can rejoin as host' 
+            socket.emit('error', {
+              code: 'UNAUTHORIZED',
+              message: 'Only the original host can rejoin as host'
             });
             return;
           }
-          
+
           // If host was disconnected, this is a reconnection
           if (roomData.hostDisconnectedAt) {
             logger.info('Host reconnected to room', { roomId, socketId: socket.id, userId: socket.user.uid });
             roomData.hostDisconnectedAt = null; // Clear disconnection timestamp
-            
+
             // Notify participants that host reconnected
             socket.to(roomId).emit('hostReconnected', {
               hostUserId: socket.user.uid,
@@ -122,11 +127,11 @@ function setupSocketHandlers(io) {
           }
         });
 
-        logger.info('User joined room', { 
-          socketId: socket.id, 
-          userId: socket.user.uid, 
-          roomId, 
-          role 
+        logger.info('User joined room', {
+          socketId: socket.id,
+          userId: socket.user.uid,
+          roomId,
+          role
         });
 
       } catch (error) {
@@ -248,10 +253,10 @@ function setupSocketHandlers(io) {
         roomData.isPlaying = isPlaying;
 
         // Relay to all followers in room (rate-limited to avoid flooding)
-        socket.to(roomId).emit('hostTimeSync', { 
-          positionSec, 
+        socket.to(roomId).emit('hostTimeSync', {
+          positionSec,
           hostTimestampMs,
-          isPlaying 
+          isPlaying
         });
 
         // Don't log every sync event to avoid log spam
@@ -373,19 +378,19 @@ async function handleLeaveRoom(socket, roomId) {
       // Mark host as disconnected with timestamp
       roomData.hostSocketId = null;
       roomData.hostDisconnectedAt = Date.now();
-      
-      logger.info('Host disconnected from room (grace period started)', { 
-        roomId, 
+
+      logger.info('Host disconnected from room (grace period started)', {
+        roomId,
         participants: roomData.participants.size,
-        gracePeriodMs: HOST_RECONNECT_GRACE_PERIOD_MS 
+        gracePeriodMs: HOST_RECONNECT_GRACE_PERIOD_MS
       });
-      
+
       // Notify participants that host disconnected (but room is still active)
       socket.to(roomId).emit('hostDisconnected', {
         message: 'Host disconnected. Room will remain active for reconnection.',
         gracePeriodMs: HOST_RECONNECT_GRACE_PERIOD_MS
       });
-      
+
       // Schedule room cleanup after grace period if host doesn't reconnect
       setTimeout(async () => {
         try {
@@ -402,25 +407,25 @@ async function handleLeaveRoom(socket, roomId) {
                 logger.warn('Room removed from memory but database close failed', { roomId });
               }
             } else {
-            // Transfer host to first participant
-            const newHostSocketId = Array.from(room.participants.keys())[0];
-            const newHost = room.participants.get(newHostSocketId);
-            room.hostSocketId = newHostSocketId;
-            newHost.role = 'host';
-            room.hostDisconnectedAt = null;
+              // Transfer host to first participant
+              const newHostSocketId = Array.from(room.participants.keys())[0];
+              const newHost = room.participants.get(newHostSocketId);
+              room.hostSocketId = newHostSocketId;
+              newHost.role = 'host';
+              room.hostDisconnectedAt = null;
 
-            io.in(roomId).emit('hostTransferred', {
-              newHostUserId: newHost.userId,
-              reason: 'Host did not reconnect within grace period'
-            });
+              io.in(roomId).emit('hostTransferred', {
+                newHostUserId: newHost.userId,
+                reason: 'Host did not reconnect within grace period'
+              });
 
-            logger.info('Host transferred (after grace period)', { roomId, newHostUserId: newHost.userId });
+              logger.info('Host transferred (after grace period)', { roomId, newHostUserId: newHost.userId });
+            }
           }
-        }
         } catch (error) {
-          logger.error('Error in grace period cleanup', { 
+          logger.error('Error in grace period cleanup', {
             error: error.message,
-            roomId 
+            roomId
           });
           // Don't crash - just log the error
         }
@@ -439,16 +444,16 @@ async function handleLeaveRoom(socket, roomId) {
       // Get participant info for better notification
       const leavingParticipant = roomData.participants.get(socket.id);
       const wasHost = roomData.hostSocketId === socket.id;
-      
+
       socket.to(roomId).emit('participantLeft', {
         userId: socket.user.uid,
         participants,
-        message: wasHost 
-          ? 'Host has left the room. Playback will pause.' 
+        message: wasHost
+          ? 'Host has left the room. Playback will pause.'
           : 'A participant has left the room.',
         wasHost: wasHost
       });
-      
+
       // If a participant (not host) left, pause playback for others
       if (!wasHost && roomData.isPlaying) {
         roomData.isPlaying = false;
@@ -467,7 +472,37 @@ async function handleLeaveRoom(socket, roomId) {
   }
 }
 
+/**
+ * External helper to pause a room (called from REST API)
+ */
+function pauseRoom(roomId) {
+  const roomData = activeRooms.get(roomId);
+  if (roomData && roomData.isPlaying) {
+    roomData.isPlaying = false;
+
+    if (ioInstance) {
+      ioInstance.to(roomId).emit('hostPause', {
+        positionSec: roomData.currentPosition,
+        hostTimestampMs: Date.now(),
+        reason: 'Participant left (temporary)'
+      });
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * External helper to get room state (called from REST API)
+ */
+function getRoomState(roomId) {
+  return activeRooms.get(roomId);
+}
+
 module.exports = {
-  setupSocketHandlers
+  setupSocketHandlers,
+  pauseRoom,
+  getRoomState,
+  activeRooms
 };
 

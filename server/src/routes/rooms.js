@@ -21,7 +21,7 @@ async function authMiddleware(req, res, next) {
 
     const token = authHeader.substring(7);
     const decodedToken = await verifyFirebaseToken(token);
-    
+
     req.user = {
       uid: decodedToken.uid,
       email: decodedToken.email,
@@ -43,9 +43,9 @@ router.post('/create', authMiddleware, async (req, res) => {
   try {
     const { error, value } = validateRequest('createRoom', req.body);
     if (error) {
-      return res.status(400).json({ 
-        error: 'Validation failed', 
-        details: error.details[0].message 
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: error.details[0].message
       });
     }
 
@@ -96,7 +96,7 @@ router.post('/:id/validate', authMiddleware, async (req, res) => {
     const { file_hash, passcode } = req.body;
 
     const room = await RoomService.getRoom(roomId);
-    
+
     if (!room) {
       return res.status(404).json({ error: 'Room not found' });
     }
@@ -110,7 +110,7 @@ router.post('/:id/validate', authMiddleware, async (req, res) => {
       if (!passcode) {
         return res.status(401).json({ error: 'Passcode required' });
       }
-      
+
       const bcrypt = require('bcrypt');
       const isValid = await bcrypt.compare(passcode, room.passcode);
       if (!isValid) {
@@ -149,7 +149,7 @@ router.post('/:id/close', authMiddleware, async (req, res) => {
     const { id: roomId } = req.params;
 
     const room = await RoomService.getRoom(roomId);
-    
+
     if (!room) {
       return res.status(404).json({ error: 'Room not found' });
     }
@@ -180,7 +180,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
     const { id: roomId } = req.params;
 
     const room = await RoomService.getRoom(roomId);
-    
+
     if (!room) {
       return res.status(404).json({ error: 'Room not found' });
     }
@@ -205,6 +205,98 @@ router.get('/:id', authMiddleware, async (req, res) => {
   } catch (error) {
     logger.error('Error getting room', { error: error.message, roomId: req.params.id });
     res.status(500).json({ error: 'Failed to get room details' });
+  }
+});
+
+const { pauseRoom, getRoomState } = require('../socket/handlers');
+
+/**
+ * POST /api/rooms/:id/leave-temporary
+ * Mark user as offline and pause room (temporary leave)
+ */
+router.post('/:id/leave-temporary', authMiddleware, async (req, res) => {
+  try {
+    const { id: roomId } = req.params;
+
+    // 1. Mark in DB as disconnected
+    await RoomService.updateParticipantStatus(roomId, req.user.uid, false);
+
+    // 2. Pause room playback via socket handler (if active in memory)
+    const paused = pauseRoom(roomId);
+
+    logger.info('User marked as temporarily left', {
+      roomId,
+      userId: req.user.uid,
+      pausedRoom: paused
+    });
+
+    res.json({ success: true, paused });
+
+  } catch (error) {
+    logger.error('Error in leave-temporary', { error: error.message, roomId: req.params.id });
+    res.status(500).json({ error: 'Failed to leave room' });
+  }
+});
+
+/**
+ * POST /api/rooms/:id/rejoin
+ * Rejoin room and get sync state
+ */
+router.post('/:id/rejoin', authMiddleware, async (req, res) => {
+  try {
+    const { id: roomId } = req.params;
+
+    // 1. Check if room exists and is active
+    const room = await RoomService.getRoom(roomId);
+    if (!room || !room.is_active || new Date(room.expires_at) < new Date()) {
+      return res.status(404).json({ error: 'Room not found or expired' });
+    }
+
+    // 2. Mark in DB as connected
+    await RoomService.updateParticipantStatus(roomId, req.user.uid, true);
+
+    // 3. Get realtime state
+    const rtState = getRoomState(roomId);
+
+    let responseState = {
+      roomId: room.id,
+      videoId: room.host_file_hash, // Using file hash as videoId identifier
+      hostFileMetadata: {
+        duration_ms: room.host_file_duration_ms,
+        size: room.host_file_size,
+        codec: room.host_file_codec
+      },
+      playbackState: 'paused',
+      currentPosition: 0,
+      participants: []
+    };
+
+    if (rtState) {
+      responseState.playbackState = rtState.isPlaying ? 'playing' : 'paused';
+      responseState.currentPosition = rtState.currentPosition;
+
+      // Convert Map participants to array
+      responseState.participants = Array.from(rtState.participants.values()).map(p => ({
+        userId: p.userId,
+        role: p.role,
+        isOnline: true // Active in memory means online
+      }));
+    } else {
+      // Room not in memory (maybe server restart), fetch basic participant list from DB
+      const dbParticipants = await RoomService.getParticipants(roomId);
+      responseState.participants = dbParticipants.map(p => ({
+        userId: p.user_id,
+        role: p.role,
+        isOnline: p.is_connected
+      }));
+    }
+
+    logger.info('User rejoined room', { roomId, userId: req.user.uid });
+    res.json(responseState);
+
+  } catch (error) {
+    logger.error('Error in rejoin', { error: error.message, roomId: req.params.id });
+    res.status(500).json({ error: 'Failed to rejoin room' });
   }
 });
 
