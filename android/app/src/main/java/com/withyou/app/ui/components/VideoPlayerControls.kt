@@ -323,7 +323,6 @@ fun VideoTopBar(
     isHost: Boolean,
     onBack: () -> Unit,
     onShare: () -> Unit,
-    onSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -384,21 +383,12 @@ fun VideoTopBar(
             }
         }
         
-        // Right - Actions
-        Row {
-            if (isHost) {
-                IconButton(onClick = onShare) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = "Share",
-                        tint = Color.White
-                    )
-                }
-            }
-            IconButton(onClick = onSettings) {
+        // Right - Actions (only share button for host)
+        if (isHost) {
+            IconButton(onClick = onShare) {
                 Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Settings",
+                    imageVector = Icons.Default.Share,
+                    contentDescription = "Share",
                     tint = Color.White
                 )
             }

@@ -62,6 +62,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import com.withyou.app.ui.utils.AutoRotationHelper
+import com.withyou.app.service.RoomService
+import androidx.lifecycle.Lifecycle
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.graphics.Color as ComposeColor
 
 /**
  * Room screen - Main playback and sync interface with enhanced video player
@@ -107,6 +112,29 @@ fun RoomScreen(
     var isRotationLocked by remember { mutableStateOf(false) } // Rotation lock state
     var lockedOrientation by remember { mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) } // Saved orientation when locked
     
+    // Auto-rotation helper - detects device tilt and rotates even when system auto-rotate is off
+    val autoRotationHelper = remember(activity) { 
+        activity?.let { 
+            try { AutoRotationHelper(it) } catch (e: Exception) { null }
+        }
+    }
+    
+    // Enable auto-rotation when entering room, disable when leaving
+    DisposableEffect(autoRotationHelper) {
+        try {
+            autoRotationHelper?.enable()
+        } catch (e: Exception) {
+            Timber.e(e, "RoomScreen: Failed to enable auto-rotation")
+        }
+        onDispose {
+            try {
+                autoRotationHelper?.disable()
+            } catch (e: Exception) {
+                Timber.e(e, "RoomScreen: Failed to disable auto-rotation")
+            }
+        }
+    }
+    
     // Helper functions for user interaction - now delegate to VideoPlayerViewModel
     fun userInteractionStart() {
         isUserInteractingWithControls = true
@@ -123,6 +151,7 @@ fun RoomScreen(
     val currentAspectRatio = remember(playerUiState.aspectMode) {
         when (playerUiState.aspectMode) {
             AspectMode.FIT -> "Fit"
+            AspectMode.FIT_SCREEN -> "Fit Screen"
             AspectMode.FILL -> "Fill"
             AspectMode.ORIGINAL -> "Original"
             AspectMode.CUSTOM -> "Custom"
@@ -152,14 +181,90 @@ fun RoomScreen(
         }
     }
     
-    // Floating reactions
-    var floatingReactions by remember { mutableStateOf(listOf<FloatingReaction>()) }
+    // Floating reactions state - local add + remove when expired with user-specific colors
+    var floatingReactions by remember { mutableStateOf<List<FloatingReaction>>(emptyList()) }
+    
+    // Floating message notification state (when chat is closed)
+    var floatingMessage by remember { mutableStateOf<String?>(null) }
+    
+    // Define emoji colors for different users
+    val myEmojiColor = RosePrimary // Pink/rose for current user
+    val partnerEmojiColor = VioletSecondary // Blue/violet for partner
+    
+    // Collect partner reactions from ViewModel and display them
+    val partnerReaction by viewModel.partnerReaction.collectAsState()
+    LaunchedEffect(partnerReaction) {
+        partnerReaction?.let { emoji ->
+            // Add partner's emoji with partner color
+            floatingReactions = floatingReactions + FloatingReaction(
+                emoji = emoji,
+                isMe = false,
+                color = partnerEmojiColor
+            )
+            
+            // Auto-remove after 2 seconds (animation duration)
+            scope.launch {
+                delay(2000)
+                if (floatingReactions.isNotEmpty()) {
+                    floatingReactions = floatingReactions.drop(1)
+                }
+            }
+        }
+    }
     
     // Check if PiP is supported
     val isPiPSupported = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
         } else false
+    }
+    
+    // Track if video was playing before going to background
+    var wasPlayingBeforeBackground by remember { mutableStateOf(false) }
+    
+    // --- ROOM BACKGROUND PERSISTENCE ---
+    // Start foreground service when entering room (keeps room alive in background)
+    LaunchedEffect(roomId) {
+        RoomService.start(context, roomId, isHost)
+    }
+    
+    // Stop foreground service when leaving room
+    DisposableEffect(Unit) {
+        onDispose {
+            RoomService.stop(context)
+        }
+    }
+    
+    // Handle app going to background/foreground using LifecycleEventObserver
+    // - Background: Pause video (but keep socket connected via RoomService)
+    // - Foreground: Resume video if it was playing
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    // App going to background
+                    if (playerUiState.isPlaying) {
+                        wasPlayingBeforeBackground = true
+                        playerViewModel.getPlayerEngine()?.pause()
+                        Timber.i("RoomScreen: App in background - pausing video")
+                    }
+                }
+                Lifecycle.Event.ON_START -> {
+                    // App returning to foreground
+                    if (wasPlayingBeforeBackground) {
+                        wasPlayingBeforeBackground = false
+                        playerViewModel.getPlayerEngine()?.play()
+                        Timber.i("RoomScreen: App in foreground - resuming video")
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
     
     // Handle room permissions - lock controls for non-host users
@@ -369,18 +474,25 @@ fun RoomScreen(
         }
     }
     
-    // Handle reaction
+    // Handle reaction - send emoji with user-specific color
     fun handleReaction(type: String) {
         val emoji = availableReactions.find { it.name == type }?.emoji ?: "❤️"
-        floatingReactions = floatingReactions + FloatingReaction(emoji = emoji)
+        // Add local emoji with "my" color (will also receive from server)
+        floatingReactions = floatingReactions + FloatingReaction(
+            emoji = emoji,
+            isMe = true,
+            color = myEmojiColor
+        )
         
+        // Auto-remove after 2 seconds (animation duration)
         scope.launch {
-            delay(3000)
+            delay(2000)
             if (floatingReactions.isNotEmpty()) {
                 floatingReactions = floatingReactions.drop(1)
             }
         }
         
+        // Send to server (will echo back to both users)
         viewModel.sendReaction(roomId, type)
     }
     
@@ -394,200 +506,205 @@ fun RoomScreen(
         Timber.i("🔴 [UI DEBUG] handleSendMessage completed")
     }
     
+    // Listen for incoming chat messages when chat is closed
+    LaunchedEffect(chatMessages.size, showChat) {
+        if (!showChat && chatMessages.isNotEmpty()) {
+            val lastMessage = chatMessages.lastOrNull()
+            // Only show floating notification for partner's messages
+            if (lastMessage != null && !lastMessage.isMe) {
+                floatingMessage = lastMessage.text
+                // Auto-dismiss after 3 seconds
+                delay(3000)
+                floatingMessage = null
+            }
+        }
+    }
+    
     // Handle external subtitle loading
     fun loadExternalSubtitle(uri: Uri) {
         Timber.d("Loading external subtitle: $uri")
         // Would need to implement subtitle loading from external file
     }
     
-    // Main content - Video shrinks when chat opens for better UX
-    // Use Row/Column layouts with weight() to ensure proper constraint propagation
-    // This ensures video actually shrinks when chat opens
-    // Landscape: Video on left, Chat on right (side-by-side)
-    // Portrait: Video on top, Chat below (YouTube-style)
+    // Main content - SINGLE video player that resizes when chat opens
+    // Video is ALWAYS rendered (never recreated), only its size animates
+    // Chat panel slides in/out using AnimatedVisibility
     
-    when {
-        showChat && isLandscape -> {
-            // Landscape with chat: Row layout - video shrinks to left, chat on right
-            // In landscape, keyboard should ONLY affect chat section, not video
-            val imePadding = WindowInsets.ime.asPaddingValues()
-            val density = LocalDensity.current
-            val configuration = LocalConfiguration.current
-            
-            // Get full screen height from configuration (doesn't change with keyboard)
-            // This ensures video section maintains full height regardless of keyboard
-            val fullScreenHeight = with(density) { configuration.screenHeightDp.dp }
-            
-            Row(
+    // Animate video weight based on chat state
+    val videoWeight by animateFloatAsState(
+        targetValue = when {
+            showChat && isLandscape -> 0.70f  // Landscape with chat: 70% video, 30% chat
+            showChat && !isLandscape -> 0.5f  // Portrait with chat: 50% video
+            else -> 1f                         // No chat: full screen
+        },
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow  // Faster animation for quick close
+        ),
+        label = "videoWeight"
+    )
+    
+    // Use Row for landscape, Column for portrait
+    if (isLandscape) {
+        // Landscape layout: Video on left, Chat on right (side-by-side)
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            // Video section - shrinks smoothly when chat opens
+            // CRITICAL: key() ensures the video player composition is NEVER recreated
+            // This prevents black screen when opening/closing chat
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black)
+                    .weight(videoWeight)
+                    .fillMaxHeight()
             ) {
-                // Video section - shrinks smoothly when chat opens
-                // IMPORTANT: Video section maintains FULL screen height - not affected by keyboard
-                val videoWeight by animateFloatAsState(
-                    targetValue = 0.65f,
+                key("video-player") {
+                    VideoContentWithControls(
+                    viewModel = viewModel,
+                    playerViewModel = playerViewModel,
+                    roomId = roomId,
+                    isHost = isHost,
+                    playerUiState = playerUiState,
+                    showLockIndicator = showLockIndicator,
+                    isFullscreen = isFullscreen,
+                    isLandscape = isLandscape,
+                    showChat = showChat,
+                    connectionStatus = connectionStatus,
+                    syncStatus = syncStatus,
+                    floatingReactions = floatingReactions,
+                    floatingMessage = floatingMessage,
+                    unreadCount = unreadCount,
+                    isPiPSupported = isPiPSupported,
+                    isRotationLocked = isRotationLocked,
+                    onToggleRotationLock = {
+                        val act = activity
+                        if (act != null) {
+                            isRotationLocked = !isRotationLocked
+                            if (isRotationLocked) {
+                                lockedOrientation = when (configuration.orientation) {
+                                    Configuration.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                                    Configuration.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                    else -> act.requestedOrientation
+                                }
+                                act.requestedOrientation = lockedOrientation
+                            } else {
+                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                            }
+                        }
+                    },
+                    onToggleControls = { 
+                        if (playerUiState.isLocked) {
+                            showLockIndicator = true
+                        } else {
+                            playerViewModel.toggleControls()
+                        }
+                    },
+                    onDoubleTapSeek = { seconds ->
+                        playerViewModel.hideControls()
+                        doubleTapSeekJob?.cancel()
+                        pendingSeekSeconds = seconds
+                        doubleTapSeekJob = scope.launch {
+                            delay(100)
+                            val seekAmount = pendingSeekSeconds
+                            if (seekAmount != 0) {
+                                if (seekAmount > 0) {
+                                    playerViewModel.seekForward(seekAmount, isHost = isHost)
+                                } else {
+                                    playerViewModel.seekBackward(-seekAmount, isHost = isHost)
+                                }
+                            }
+                            delay(50)
+                            playerViewModel.hideControls()
+                        }
+                    },
+                    onSeek = { 
+                        playerViewModel.onUserInteraction()
+                        playerViewModel.onUserScrubbingStart()
+                        playerViewModel.seekTo(it, isHost = isHost, fromUser = true)
+                        playerViewModel.onUserScrubbingEnd()
+                    },
+                    onPlayPause = { 
+                        playerViewModel.togglePlayPause(isHost = isHost)
+                    },
+                    onSeekForward = { seconds -> 
+                        playerViewModel.seekForward(seconds, isHost = isHost) 
+                    },
+                    onSeekBackward = { seconds -> 
+                        playerViewModel.seekBackward(seconds, isHost = isHost) 
+                    },
+                    onToggleFullscreen = { isFullscreen = !isFullscreen },
+                    onSpeedChange = { speed ->
+                        playerViewModel.setPlaybackRate(speed, isHost = isHost)
+                    },
+                    onAspectRatioChange = { ratio ->
+                        val mode = when (ratio) {
+                            "Fit" -> AspectMode.FIT
+                            "Fit Screen" -> AspectMode.FIT_SCREEN
+                            "Fill" -> AspectMode.FILL
+                            "Original" -> AspectMode.ORIGINAL
+                            "16:9" -> AspectMode.CUSTOM
+                            "4:3" -> AspectMode.CUSTOM
+                            "21:9" -> AspectMode.CUSTOM
+                            "1:1" -> AspectMode.CUSTOM
+                            else -> AspectMode.FIT
+                        }
+                        playerViewModel.setAspectMode(mode, customRatio = if (mode == AspectMode.CUSTOM) ratio else null, isHost = isHost)
+                    },
+                    onAudioTrackChange = { trackId ->
+                        playerViewModel.setAudioTrack(trackId, isHost = isHost)
+                    },
+                    onSubtitleTrackChange = { trackId ->
+                        playerViewModel.setSubtitleTrack(trackId, isHost = isHost)
+                    },
+                    onLockControls = { 
+                        playerViewModel.toggleLock()
+                    },
+                    onUnlock = { 
+                        playerViewModel.toggleLock()
+                        showLockIndicator = false
+                    },
+                    onShowShare = { showShareDialog = true },
+                    onShowSettings = { showSettingsSheet = true },
+                    onShowChat = { showChat = true; unreadCount = 0 },
+                    onShowLeave = { showLeaveDialog = true },
+                    onEnterPiP = { enterPiPMode() },
+                    onReaction = { handleReaction(it) },
+                    onBack = {
+                        if (isFullscreen) isFullscreen = false
+                        else if (isPiPSupported) enterPiPMode()
+                        else showLeaveDialog = true
+                    },
+                    onUserInteractionStart = { userInteractionStart() },
+                    onUserInteractionEnd = { userInteractionEnd() },
+                    onDismissFloatingMessage = { floatingMessage = null }
+                )
+                } // Close key("video-player")
+            }
+            
+            // Chat panel - slides in from right
+            AnimatedVisibility(
+                visible = showChat,
+                enter = slideInHorizontally(
+                    initialOffsetX = { it },
                     animationSpec = spring(
                         dampingRatio = Spring.DampingRatioMediumBouncy,
                         stiffness = Spring.StiffnessLow
-                    ),
-                    label = "videoWeight"
-                )
-                
+                    )
+                ) + fadeIn(),
+                exit = slideOutHorizontally(
+                    targetOffsetX = { it },
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessLow
+                    )
+                ) + fadeOut()
+            ) {
                 Box(
                     modifier = Modifier
-                        .weight(videoWeight)
-                        // Video section uses full screen height - IME insets don't affect it
-                        .height(fullScreenHeight)
-                        .animateContentSize(
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessLow
-                            )
-                        )
-                ) {
-        VideoContentWithControls(
-                        viewModel = viewModel,
-                        playerViewModel = playerViewModel,
-                roomId = roomId,
-                isHost = isHost,
-                        playerUiState = playerUiState,
-                showLockIndicator = showLockIndicator,
-                isFullscreen = isFullscreen,
-                isLandscape = isLandscape,
-                showChat = showChat,
-                connectionStatus = connectionStatus,
-                syncStatus = syncStatus,
-                floatingReactions = floatingReactions,
-                unreadCount = unreadCount,
-                isPiPSupported = isPiPSupported,
-                        isRotationLocked = isRotationLocked,
-                        onToggleRotationLock = {
-                            val act = activity
-                            if (act != null) {
-                                isRotationLocked = !isRotationLocked
-                                if (isRotationLocked) {
-                                    lockedOrientation = when (configuration.orientation) {
-                                        Configuration.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                                        Configuration.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                        else -> act.requestedOrientation
-                                    }
-                                    act.requestedOrientation = lockedOrientation
-                                } else {
-                                    act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                                }
-                            }
-                        },
-                onToggleControls = { 
-                    if (playerUiState.isLocked) {
-                        showLockIndicator = true
-                    } else {
-                                playerViewModel.toggleControls()
-                    }
-                },
-                onDoubleTapSeek = { seconds ->
-                            playerViewModel.hideControls()
-                            doubleTapSeekJob?.cancel()
-                            pendingSeekSeconds = seconds
-                            doubleTapSeekJob = scope.launch {
-                                delay(100)
-                                val seekAmount = pendingSeekSeconds
-                                if (seekAmount != 0) {
-                                    if (seekAmount > 0) {
-                                        playerViewModel.seekForward(seekAmount, isHost = isHost)
-                    } else {
-                                        playerViewModel.seekBackward(-seekAmount, isHost = isHost)
-                                    }
-                                }
-                                delay(50)
-                                playerViewModel.hideControls()
-                    }
-                },
-                onSeek = { 
-                    playerViewModel.onUserInteraction()
-                    playerViewModel.onUserScrubbingStart()
-                    playerViewModel.seekTo(it, isHost = isHost, fromUser = true)
-                    playerViewModel.onUserScrubbingEnd()
-                },
-                onPlayPause = { 
-                    playerViewModel.togglePlayPause(isHost = isHost)
-                },
-                onSeekForward = { seconds -> 
-                    playerViewModel.seekForward(seconds, isHost = isHost) 
-                },
-                onSeekBackward = { seconds -> 
-                    playerViewModel.seekBackward(seconds, isHost = isHost) 
-                },
-                onToggleFullscreen = { isFullscreen = !isFullscreen },
-                onSpeedChange = { speed ->
-                    playerViewModel.setPlaybackRate(speed, isHost = isHost)
-                },
-                onAspectRatioChange = { ratio ->
-                    val mode = when (ratio) {
-                        "Fit" -> AspectMode.FIT
-                        "Fill" -> AspectMode.FILL
-                        "Original" -> AspectMode.ORIGINAL
-                        "16:9" -> AspectMode.CUSTOM
-                        "4:3" -> AspectMode.CUSTOM
-                        "21:9" -> AspectMode.CUSTOM
-                        "1:1" -> AspectMode.CUSTOM
-                        else -> AspectMode.FIT
-                    }
-                    playerViewModel.setAspectMode(mode, customRatio = if (mode == AspectMode.CUSTOM) ratio else null, isHost = isHost)
-                },
-                onAudioTrackChange = { trackId ->
-                    playerViewModel.setAudioTrack(trackId, isHost = isHost)
-                },
-                onSubtitleTrackChange = { trackId ->
-                    playerViewModel.setSubtitleTrack(trackId, isHost = isHost)
-                },
-                onLockControls = { 
-                            playerViewModel.toggleLock()
-                },
-                onUnlock = { 
-                    playerViewModel.toggleLock()
-                    showLockIndicator = false
-                },
-                onShowShare = { showShareDialog = true },
-                onShowSettings = { showSettingsSheet = true },
-                onShowChat = { showChat = true; unreadCount = 0 },
-                onShowLeave = { showLeaveDialog = true },
-                onEnterPiP = { enterPiPMode() },
-                onReaction = { handleReaction(it) },
-                onBack = {
-                    if (isFullscreen) isFullscreen = false
-                    else if (isPiPSupported) enterPiPMode()
-                    else showLeaveDialog = true
-                },
-                onUserInteractionStart = { userInteractionStart() },
-                onUserInteractionEnd = { userInteractionEnd() }
-            )
-                }
-                
-                // Chat panel - slides in from right
-                // IMPORTANT: Only chat section consumes IME insets - keyboard only affects chat
-                // Video section maintains full height, chat section uses full height but input field
-                // has IME padding to position it above keyboard
-                AnimatedVisibility(
-                    visible = showChat,
-                    enter = slideInHorizontally(
-                        initialOffsetX = { it },
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
-                        )
-                    ) + fadeIn(),
-                    exit = slideOutHorizontally(
-                        targetOffsetX = { it },
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
-                        )
-                    ) + fadeOut(),
-                    modifier = Modifier
-                        .weight(0.35f)
-                        // Chat section uses full height - input field's IME padding handles keyboard positioning
-                        .height(fullScreenHeight)
+                        .fillMaxHeight()
+                        .fillMaxWidth(0.30f) // Fixed 30% width for chat panel
                 ) {
                     SideChatPanel(
                         messages = chatMessages,
@@ -598,338 +715,176 @@ fun RoomScreen(
                 }
             }
         }
-        showChat && !isLandscape -> {
-            // Portrait with chat: Always show normal layout, overlay input at top when keyboard opens
-            val imeInsets = WindowInsets.ime
-            val imePadding = imeInsets.asPaddingValues()
-            val imeBottomPadding = imePadding.calculateBottomPadding().value
-            
-            // Detect keyboard state with threshold to prevent rapid switching
-            // Use a threshold to avoid flickering when keyboard is animating
-            val isKeyboardOpen = imeBottomPadding > 50.dp.value
-            
+    } else {
+        // Portrait layout: Video on top, Chat overlay below
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            // Video section - ALWAYS rendered, shrinks when chat opens
+            // CRITICAL: key() ensures the video player composition is NEVER recreated
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black)
+                    .fillMaxWidth()
+                    .fillMaxHeight(videoWeight)
+                    .align(Alignment.TopCenter)
             ) {
-                // Normal layout - always rendered to keep input field instance stable
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    // Video section - takes available space above chat
-                    val videoWeight by animateFloatAsState(
-                        targetValue = 0.6f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow
-                        ),
-                        label = "videoWeight"
-                    )
-                    
-                    Box(
-                        modifier = Modifier
-                            .weight(videoWeight)
-                            .fillMaxWidth()
-                            .animateContentSize(
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                                    stiffness = Spring.StiffnessLow
-                                )
-                            )
-                    ) {
-                        VideoContentWithControls(
-                            viewModel = viewModel,
-                            playerViewModel = playerViewModel,
-                            roomId = roomId,
-                            isHost = isHost,
-                            playerUiState = playerUiState,
-                            showLockIndicator = showLockIndicator,
-                            isFullscreen = isFullscreen,
-                            isLandscape = isLandscape,
-                            showChat = showChat,
-                            connectionStatus = connectionStatus,
-                            syncStatus = syncStatus,
-                            floatingReactions = floatingReactions,
-                            unreadCount = unreadCount,
-                            isPiPSupported = isPiPSupported,
-                            isRotationLocked = isRotationLocked,
-                            onToggleRotationLock = {
-                                val act = activity
-                                if (act != null) {
-                                    isRotationLocked = !isRotationLocked
-                                    if (isRotationLocked) {
-                                        lockedOrientation = when (configuration.orientation) {
-                                            Configuration.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                                            Configuration.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                            else -> act.requestedOrientation
-                                        }
-                                        act.requestedOrientation = lockedOrientation
-                                    } else {
-                                        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                                    }
+                key("video-player-portrait") {
+                    VideoContentWithControls(
+                    viewModel = viewModel,
+                    playerViewModel = playerViewModel,
+                    roomId = roomId,
+                    isHost = isHost,
+                    playerUiState = playerUiState,
+                    showLockIndicator = showLockIndicator,
+                    isFullscreen = isFullscreen,
+                    isLandscape = isLandscape,
+                    showChat = showChat,
+                    connectionStatus = connectionStatus,
+                    syncStatus = syncStatus,
+                    floatingReactions = floatingReactions,
+                    floatingMessage = floatingMessage,
+                    unreadCount = unreadCount,
+                    isPiPSupported = isPiPSupported,
+                    isRotationLocked = isRotationLocked,
+                    onToggleRotationLock = {
+                        val act = activity
+                        if (act != null) {
+                            isRotationLocked = !isRotationLocked
+                            if (isRotationLocked) {
+                                lockedOrientation = when (configuration.orientation) {
+                                    Configuration.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                                    Configuration.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                    else -> act.requestedOrientation
                                 }
-                            },
-                            onToggleControls = { 
-                                if (playerUiState.isLocked) {
-                                    showLockIndicator = true
+                                act.requestedOrientation = lockedOrientation
+                            } else {
+                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                            }
+                        }
+                    },
+                    onToggleControls = { 
+                        if (playerUiState.isLocked) {
+                            showLockIndicator = true
+                        } else {
+                            playerViewModel.toggleControls()
+                        }
+                    },
+                    onDoubleTapSeek = { seconds ->
+                        playerViewModel.hideControls()
+                        doubleTapSeekJob?.cancel()
+                        pendingSeekSeconds = seconds
+                        doubleTapSeekJob = scope.launch {
+                            delay(100)
+                            val seekAmount = pendingSeekSeconds
+                            if (seekAmount != 0) {
+                                if (seekAmount > 0) {
+                                    playerViewModel.seekForward(seekAmount, isHost = isHost)
                                 } else {
-                                    playerViewModel.toggleControls()
+                                    playerViewModel.seekBackward(-seekAmount, isHost = isHost)
                                 }
-                            },
-                            onDoubleTapSeek = { seconds ->
-                                playerViewModel.hideControls()
-                                doubleTapSeekJob?.cancel()
-                                pendingSeekSeconds = seconds
-                                doubleTapSeekJob = scope.launch {
-                                    delay(100)
-                                    val seekAmount = pendingSeekSeconds
-                                    if (seekAmount != 0) {
-                                        if (seekAmount > 0) {
-                                            playerViewModel.seekForward(seekAmount, isHost = isHost)
-                                        } else {
-                                            playerViewModel.seekBackward(-seekAmount, isHost = isHost)
-                                        }
-                                    }
-                                    delay(50)
-                                    playerViewModel.hideControls()
-                                }
-                            },
-                            onSeek = { 
-                                playerViewModel.onUserInteraction()
-                                playerViewModel.onUserScrubbingStart()
-                                playerViewModel.seekTo(it, isHost = isHost, fromUser = true)
-                                playerViewModel.onUserScrubbingEnd()
-                            },
-                            onPlayPause = { 
-                                playerViewModel.togglePlayPause(isHost = isHost)
-                            },
-                            onSeekForward = { seconds -> 
-                                playerViewModel.seekForward(seconds, isHost = isHost) 
-                            },
-                            onSeekBackward = { seconds -> 
-                                playerViewModel.seekBackward(seconds, isHost = isHost) 
-                            },
-                            onToggleFullscreen = { isFullscreen = !isFullscreen },
-                            onSpeedChange = { speed ->
-                                playerViewModel.setPlaybackRate(speed, isHost = isHost)
-                            },
-                            onAspectRatioChange = { ratio ->
-                                val mode = when (ratio) {
-                                    "Fit" -> AspectMode.FIT
-                                    "Fill" -> AspectMode.FILL
-                                    "Original" -> AspectMode.ORIGINAL
-                                    "16:9" -> AspectMode.CUSTOM
-                                    "4:3" -> AspectMode.CUSTOM
-                                    "21:9" -> AspectMode.CUSTOM
-                                    "1:1" -> AspectMode.CUSTOM
-                                    else -> AspectMode.FIT
-                                }
-                                playerViewModel.setAspectMode(mode, customRatio = if (mode == AspectMode.CUSTOM) ratio else null, isHost = isHost)
-                            },
-                            onAudioTrackChange = { trackId ->
-                                playerViewModel.setAudioTrack(trackId, isHost = isHost)
-                            },
-                            onSubtitleTrackChange = { trackId ->
-                                playerViewModel.setSubtitleTrack(trackId, isHost = isHost)
-                            },
-                            onLockControls = { 
-                                playerViewModel.toggleLock()
-                            },
-                            onUnlock = { 
-                                playerViewModel.toggleLock()
-                                showLockIndicator = false
-                            },
-                            onShowShare = { showShareDialog = true },
-                            onShowSettings = { showSettingsSheet = true },
-                            onShowChat = { showChat = true; unreadCount = 0 },
-                            onShowLeave = { showLeaveDialog = true },
-                            onEnterPiP = { enterPiPMode() },
-                            onReaction = { handleReaction(it) },
-                            onBack = {
-                                if (isFullscreen) isFullscreen = false
-                                else if (isPiPSupported) enterPiPMode()
-                                else showLeaveDialog = true
-                            },
-                            onUserInteractionStart = { userInteractionStart() },
-                            onUserInteractionEnd = { userInteractionEnd() }
-                        )
-                    }
-                    
-                    // Chat section - always visible
-                    AnimatedVisibility(
-                        visible = showChat,
-                        enter = slideInVertically(
-                            initialOffsetY = { it },
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessLow
-                            )
-                        ) + fadeIn(),
-                        exit = slideOutVertically(
-                            targetOffsetY = { it },
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessLow
-                            )
-                        ) + fadeOut(),
-                        modifier = Modifier
-                            .weight(0.4f)
-                            .fillMaxWidth()
-                    ) {
-                        ChatOverlay(
-                            messages = chatMessages,
-                            onSendMessage = { handleSendMessage(it) },
-                            onClose = { showChat = false },
-                            modifier = Modifier.fillMaxSize(),
-                            // Pass keyboard state to hide input with alpha when keyboard is open
-                            showInputAtTop = isKeyboardOpen,
-                            messageText = sharedMessageText,
-                            onMessageTextChange = { sharedMessageText = it }
-                        )
-                    }
-                }
-                
-                // Always render overlay input, but control visibility with alpha
-                // This prevents layout changes that cause focus loss
-                key("chat_input_overlay") {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.TopCenter)
-                            .alpha(if (isKeyboardOpen) 1f else 0f) // Hide with alpha instead of conditional rendering
-                    ) {
-                        ChatInputOnly(
-                            onSendMessage = { 
-                                handleSendMessage(it)
-                                sharedMessageText = "" // Clear after sending
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            messageText = sharedMessageText,
-                            onMessageTextChange = { sharedMessageText = it }
-                        )
-                    }
+                            }
+                            delay(50)
+                            playerViewModel.hideControls()
+                        }
+                    },
+                    onSeek = { 
+                        playerViewModel.onUserInteraction()
+                        playerViewModel.onUserScrubbingStart()
+                        playerViewModel.seekTo(it, isHost = isHost, fromUser = true)
+                        playerViewModel.onUserScrubbingEnd()
+                    },
+                    onPlayPause = { 
+                        playerViewModel.togglePlayPause(isHost = isHost)
+                    },
+                    onSeekForward = { seconds -> 
+                        playerViewModel.seekForward(seconds, isHost = isHost) 
+                    },
+                    onSeekBackward = { seconds -> 
+                        playerViewModel.seekBackward(seconds, isHost = isHost) 
+                    },
+                    onToggleFullscreen = { isFullscreen = !isFullscreen },
+                    onSpeedChange = { speed ->
+                        playerViewModel.setPlaybackRate(speed, isHost = isHost)
+                    },
+                    onAspectRatioChange = { ratio ->
+                        val mode = when (ratio) {
+                            "Fit" -> AspectMode.FIT
+                            "Fit Screen" -> AspectMode.FIT_SCREEN
+                            "Fill" -> AspectMode.FILL
+                            "Original" -> AspectMode.ORIGINAL
+                            "16:9" -> AspectMode.CUSTOM
+                            "4:3" -> AspectMode.CUSTOM
+                            "21:9" -> AspectMode.CUSTOM
+                            "1:1" -> AspectMode.CUSTOM
+                            else -> AspectMode.FIT
+                        }
+                        playerViewModel.setAspectMode(mode, customRatio = if (mode == AspectMode.CUSTOM) ratio else null, isHost = isHost)
+                    },
+                    onAudioTrackChange = { trackId ->
+                        playerViewModel.setAudioTrack(trackId, isHost = isHost)
+                    },
+                    onSubtitleTrackChange = { trackId ->
+                        playerViewModel.setSubtitleTrack(trackId, isHost = isHost)
+                    },
+                    onLockControls = { 
+                        playerViewModel.toggleLock()
+                    },
+                    onUnlock = { 
+                        playerViewModel.toggleLock()
+                        showLockIndicator = false
+                    },
+                    onShowShare = { showShareDialog = true },
+                    onShowSettings = { showSettingsSheet = true },
+                    onShowChat = { showChat = true; unreadCount = 0 },
+                    onShowLeave = { showLeaveDialog = true },
+                    onEnterPiP = { enterPiPMode() },
+                    onReaction = { handleReaction(it) },
+                    onBack = {
+                        if (isFullscreen) isFullscreen = false
+                        else if (isPiPSupported) enterPiPMode()
+                        else showLeaveDialog = true
+                    },
+                    onUserInteractionStart = { userInteractionStart() },
+                    onUserInteractionEnd = { userInteractionEnd() },
+                    onDismissFloatingMessage = { floatingMessage = null }
+                )
+                } // Close key("video-player-portrait")
+            }
+            
+            // Chat panel - slides up from bottom in portrait
+            AnimatedVisibility(
+                visible = showChat,
+                enter = slideInVertically(
+                    initialOffsetY = { it },
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessLow
+                    )
+                ) + fadeIn(),
+                exit = slideOutVertically(
+                    targetOffsetY = { it },
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessLow
+                    )
+                ) + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.5f) // Fixed 50% height for chat panel
+                ) {
+                    ChatOverlay(
+                        messages = chatMessages,
+                        onSendMessage = { handleSendMessage(it) },
+                        onClose = { showChat = false },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
-        }
-        else -> {
-            // No chat: Full screen video
-            VideoContentWithControls(
-                viewModel = viewModel,
-                playerViewModel = playerViewModel,
-                roomId = roomId,
-                isHost = isHost,
-                playerUiState = playerUiState,
-                showLockIndicator = showLockIndicator,
-                isFullscreen = isFullscreen,
-                isLandscape = isLandscape,
-                showChat = showChat,
-                connectionStatus = connectionStatus,
-                syncStatus = syncStatus,
-                floatingReactions = floatingReactions,
-                unreadCount = unreadCount,
-                isPiPSupported = isPiPSupported,
-                isRotationLocked = isRotationLocked,
-                onToggleRotationLock = {
-                    val act = activity
-                    if (act != null) {
-                        isRotationLocked = !isRotationLocked
-                        if (isRotationLocked) {
-                            lockedOrientation = when (configuration.orientation) {
-                                Configuration.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                                Configuration.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                else -> act.requestedOrientation
-                            }
-                            act.requestedOrientation = lockedOrientation
-                        } else {
-                            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                        }
-                    }
-                },
-                onToggleControls = { 
-                    if (playerUiState.isLocked) {
-                        showLockIndicator = true
-                    } else {
-                        playerViewModel.toggleControls()
-                    }
-                },
-                onDoubleTapSeek = { seconds ->
-                    playerViewModel.hideControls()
-                    doubleTapSeekJob?.cancel()
-                    pendingSeekSeconds = seconds
-                    doubleTapSeekJob = scope.launch {
-                        delay(100)
-                        val seekAmount = pendingSeekSeconds
-                        if (seekAmount != 0) {
-                            if (seekAmount > 0) {
-                                playerViewModel.seekForward(seekAmount, isHost = isHost)
-                            } else {
-                                playerViewModel.seekBackward(-seekAmount, isHost = isHost)
-                            }
-                        }
-                        delay(50)
-                        playerViewModel.hideControls()
-                    }
-                },
-                onSeek = { 
-                    playerViewModel.onUserInteraction()
-                    playerViewModel.onUserScrubbingStart()
-                    playerViewModel.seekTo(it, isHost = isHost, fromUser = true)
-                    playerViewModel.onUserScrubbingEnd()
-                },
-                onPlayPause = { 
-                    playerViewModel.togglePlayPause(isHost = isHost)
-                },
-                onSeekForward = { seconds -> 
-                    playerViewModel.seekForward(seconds, isHost = isHost) 
-                },
-                onSeekBackward = { seconds -> 
-                    playerViewModel.seekBackward(seconds, isHost = isHost) 
-                },
-                onToggleFullscreen = { isFullscreen = !isFullscreen },
-                onSpeedChange = { speed ->
-                    playerViewModel.setPlaybackRate(speed, isHost = isHost)
-                },
-                onAspectRatioChange = { ratio ->
-                    val mode = when (ratio) {
-                        "Fit" -> AspectMode.FIT
-                        "Fill" -> AspectMode.FILL
-                        "Original" -> AspectMode.ORIGINAL
-                        "16:9" -> AspectMode.CUSTOM
-                        "4:3" -> AspectMode.CUSTOM
-                        "21:9" -> AspectMode.CUSTOM
-                        "1:1" -> AspectMode.CUSTOM
-                        else -> AspectMode.FIT
-                    }
-                    playerViewModel.setAspectMode(mode, customRatio = if (mode == AspectMode.CUSTOM) ratio else null, isHost = isHost)
-                },
-                onAudioTrackChange = { trackId ->
-                    playerViewModel.setAudioTrack(trackId, isHost = isHost)
-                },
-                onSubtitleTrackChange = { trackId ->
-                    playerViewModel.setSubtitleTrack(trackId, isHost = isHost)
-                },
-                onLockControls = { 
-                    playerViewModel.toggleLock()
-                },
-                onUnlock = { 
-                    playerViewModel.toggleLock()
-                    showLockIndicator = false
-                },
-                onShowShare = { showShareDialog = true },
-                onShowSettings = { showSettingsSheet = true },
-                onShowChat = { showChat = true; unreadCount = 0 },
-                onShowLeave = { showLeaveDialog = true },
-                onEnterPiP = { enterPiPMode() },
-                onReaction = { handleReaction(it) },
-                onBack = {
-                    if (isFullscreen) isFullscreen = false
-                    else if (isPiPSupported) enterPiPMode()
-                    else showLeaveDialog = true
-                },
-                onUserInteractionStart = { userInteractionStart() },
-                onUserInteractionEnd = { userInteractionEnd() }
-            )
         }
     }
     
@@ -992,6 +947,7 @@ fun RoomScreen(
                 playbackSpeed = playerUiState.playbackRate, // From PlayerUiState
                 currentAspectRatio = when (playerUiState.aspectMode) {
                     AspectMode.FIT -> AspectRatioOption.FIT
+                    AspectMode.FIT_SCREEN -> AspectRatioOption.FIT_SCREEN
                     AspectMode.FILL -> AspectRatioOption.FILL
                     AspectMode.ORIGINAL -> AspectRatioOption.FIT // Map to FIT for settings
                     AspectMode.CUSTOM -> AspectRatioOption.RATIO_16_9 // Default for custom
@@ -1020,6 +976,7 @@ fun RoomScreen(
                     // Convert AspectRatioOption to AspectMode
                     val mode = when (ratio) {
                         AspectRatioOption.FIT -> AspectMode.FIT
+                        AspectRatioOption.FIT_SCREEN -> AspectMode.FIT_SCREEN
                         AspectRatioOption.FILL -> AspectMode.FILL
                         AspectRatioOption.RATIO_16_9 -> AspectMode.CUSTOM
                         AspectRatioOption.RATIO_4_3 -> AspectMode.CUSTOM
@@ -1081,6 +1038,7 @@ private fun VideoContentWithControls(
     connectionStatus: String,
     syncStatus: String,
     floatingReactions: List<FloatingReaction>,
+    floatingMessage: String?, // Floating message notification when chat is closed
     unreadCount: Int,
     isPiPSupported: Boolean,
     isRotationLocked: Boolean,
@@ -1106,7 +1064,8 @@ private fun VideoContentWithControls(
     onReaction: (String) -> Unit,
     onBack: () -> Unit,
     onUserInteractionStart: () -> Unit,
-    onUserInteractionEnd: () -> Unit
+    onUserInteractionEnd: () -> Unit,
+    onDismissFloatingMessage: () -> Unit // Callback to dismiss floating message
 ) {
     // Observe video size for aspect ratio (from RoomViewModel for sync)
     val videoSize by viewModel.videoSize.collectAsState()
@@ -1166,6 +1125,12 @@ private fun VideoContentWithControls(
             )
         }
         
+        // Buffering overlay with animated embers
+        BufferingEmberOverlay(
+            isBuffering = playerUiState.isBuffering,
+            modifier = Modifier.fillMaxSize()
+        )
+        
         // Unlock overlay - always visible when locked (VLC pattern: show unlock UI even when controls hidden)
         if (playerUiState.isLocked) {
             UnlockOverlay(
@@ -1193,7 +1158,6 @@ private fun VideoContentWithControls(
                         isHost = isHost,
                         onBack = onBack,
                         onShare = onShowShare,
-                        onSettings = onShowSettings,
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
                     
@@ -1338,6 +1302,22 @@ private fun VideoContentWithControls(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+        }
+        
+        // Floating reactions overlay - shows emojis floating up over video
+        FloatingReactionsOverlay(
+            reactions = floatingReactions,
+            modifier = Modifier.fillMaxSize()
+        )
+        
+        // Floating message notification - shows chat messages when chat is closed  
+        floatingMessage?.let { message ->
+            FloatingMessageNotification(
+                message = message,
+                isLandscape = isLandscape,
+                onDismiss = onDismissFloatingMessage,
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
         }
     }
 }

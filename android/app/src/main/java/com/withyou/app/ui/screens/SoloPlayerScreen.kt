@@ -7,6 +7,8 @@ import android.provider.OpenableColumns
 import android.view.View
 import android.view.WindowManager
 import android.app.Activity
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -28,12 +30,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.withyou.app.ui.components.LibVLCPlayerView
 import com.withyou.app.ui.components.VLCPlayerControls
 import com.withyou.app.ui.components.VideoGestureHandler
+import com.withyou.app.ui.components.BufferingEmberOverlay
 import com.withyou.app.ui.theme.*
 import com.withyou.app.viewmodel.VideoPlayerViewModel
 import com.withyou.app.player.AspectMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import androidx.compose.ui.platform.LocalConfiguration
+import com.withyou.app.ui.utils.AutoRotationHelper
 
 /**
  * Solo Player Screen - Offline playback without room/sync logic
@@ -50,6 +55,34 @@ fun SoloPlayerScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val activity = context as? Activity
+    val configuration = LocalConfiguration.current
+    
+    // Rotation lock state
+    var isRotationLocked by remember { mutableStateOf(false) }
+    var lockedOrientation by remember { mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) }
+    
+    // Auto-rotation helper - detects device tilt and rotates even when system auto-rotate is off
+    val autoRotationHelper = remember(activity) { 
+        activity?.let { 
+            try { AutoRotationHelper(it) } catch (e: Exception) { null }
+        }
+    }
+    
+    // Enable auto-rotation when entering solo player, disable when leaving
+    DisposableEffect(autoRotationHelper) {
+        try {
+            autoRotationHelper?.enable()
+        } catch (e: Exception) {
+            Timber.e(e, "SoloPlayerScreen: Failed to enable auto-rotation")
+        }
+        onDispose {
+            try {
+                autoRotationHelper?.disable()
+            } catch (e: Exception) {
+                Timber.e(e, "SoloPlayerScreen: Failed to disable auto-rotation")
+            }
+        }
+    }
     
     // Get video name from URI
     val videoName = remember(videoUri) {
@@ -158,6 +191,7 @@ fun SoloPlayerScreen(
     fun handleAspectRatioChange(ratio: String) {
         val mode = when (ratio) {
             "Fit" -> AspectMode.FIT
+            "Fit Screen" -> AspectMode.FIT_SCREEN
             "Fill" -> AspectMode.FILL
             "Original" -> AspectMode.ORIGINAL
             "16:9" -> AspectMode.CUSTOM
@@ -249,6 +283,12 @@ fun SoloPlayerScreen(
             )
         }
         
+        // Buffering overlay with animated embers
+        BufferingEmberOverlay(
+            isBuffering = playerUiState.isBuffering,
+            modifier = Modifier.fillMaxSize()
+        )
+        
         // Top bar - shows video name and back button (only when controls are visible)
         AnimatedVisibility(
             visible = playerUiState.showControls && !playerUiState.isLocked,
@@ -306,8 +346,27 @@ fun SoloPlayerScreen(
                     onAudioTrackChange = { trackId -> handleAudioTrackChange(trackId) },
                     onSubtitleTrackChange = { trackId -> handleSubtitleTrackChange(trackId) },
                     onLockControls = { playerViewModel.toggleLock() },
-                    isRotationLocked = false, // No rotation lock in solo mode
-                    onToggleRotationLock = {}, // No-op in solo mode
+                    isRotationLocked = isRotationLocked,
+                    onToggleRotationLock = {
+                        activity?.let { act ->
+                            isRotationLocked = !isRotationLocked
+                            if (isRotationLocked) {
+                                // Lock rotation to current orientation
+                                lockedOrientation = when (configuration.orientation) {
+                                    Configuration.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                                    Configuration.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                    else -> act.requestedOrientation
+                                }
+                                act.requestedOrientation = lockedOrientation
+                                // Also lock the auto-rotation helper
+                                autoRotationHelper?.lock()
+                            } else {
+                                // Unlock and allow auto-rotation
+                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                autoRotationHelper?.unlock()
+                            }
+                        }
+                    },
                     onUserInteractionStart = { handleUserInteractionStart() },
                     onUserInteractionEnd = { handleUserInteractionEnd() },
                     modifier = Modifier.fillMaxWidth()

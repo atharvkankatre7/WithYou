@@ -377,6 +377,13 @@ class VideoPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     surfaceHeight
                 )
             }
+            AspectMode.FIT_SCREEN -> {
+                engine.setScaleMode(
+                    LibVLCVideoPlayer.VideoScaleMode.FIT_SCREEN,
+                    surfaceWidth,
+                    surfaceHeight
+                )
+            }
             AspectMode.ORIGINAL -> {
                 engine.setScaleMode(
                     LibVLCVideoPlayer.VideoScaleMode.ORIGINAL,

@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -55,6 +56,13 @@ fun HomeScreen(
     var showJoinDialog by remember { mutableStateOf(false) }
     var joinRoomId by remember { mutableStateOf("") }
     var pendingJoinRoomId by remember { mutableStateOf<String?>(null) }
+    
+    // State for Re-Sync
+    // Use remember because we don't want to re-read prefs on every recomposition
+    // but allow updating when dismiss/clear happens
+    val lastRoomManager = remember { LastRoomManager(context) }
+    var lastRoomInfo by remember { mutableStateOf(lastRoomManager.getLastRoom()) }
+    var pendingReSyncRoom by remember { mutableStateOf<LastRoomInfo?>(null) }
     
     // Request permissions for video access (Android 13+)
     val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -91,12 +99,21 @@ fun HomeScreen(
         }
     }
     
-    // Navigate to room when ready
+    // Navigate to room when ready or Handle Re-Sync
     LaunchedEffect(uiState) {
         if (uiState is RoomUiState.RoomReady) {
             val state = uiState as RoomUiState.RoomReady
             val isHost = viewModel.isHost.value
             onNavigateToRoom(state.roomId, isHost)
+        }
+        
+        // Auto-trigger re-sync when file is loaded if we have a pending re-sync
+        if (uiState is RoomUiState.FileLoaded && pendingReSyncRoom != null) {
+            val room = pendingReSyncRoom!!
+            Timber.i("File loaded for re-sync - calling reSyncRoom")
+            viewModel.reSyncRoom(room.roomId, room.videoId)
+            // Note: We don't clear pendingReSyncRoom immedately to avoid race conditions,
+            // but the state change to JoiningRoom will prevent re-triggering
         }
     }
     
@@ -127,12 +144,24 @@ fun HomeScreen(
                 is RoomUiState.Idle -> {
                     WelcomeContent(
                         isVisible = isVisible,
+                        lastRoomInfo = lastRoomInfo,
                         onCreateRoom = { 
                             pendingJoinRoomId = null
+                            pendingReSyncRoom = null
                             filePicker.launch("video/*") 
                         },
                         onJoinRoom = { showJoinDialog = true },
-                        onNavigateToMediaLibrary = onNavigateToMediaLibrary
+                        onNavigateToMediaLibrary = onNavigateToMediaLibrary,
+                        onReSync = { info ->
+                            pendingReSyncRoom = info
+                            // Launch file picker to ensure user has the file
+                            // Logic handles re-sync call once file is loaded
+                            filePicker.launch("video/*")
+                        },
+                        onDismissReSync = {
+                            lastRoomManager.clearLastRoom()
+                            lastRoomInfo = null
+                        }
                     )
                 }
             is RoomUiState.LoadingFile -> {
@@ -210,7 +239,7 @@ fun HomeScreen(
 }
 
 /**
- * Animated background circles
+ * Animated background circles with red-black theme
  */
 @Composable
 private fun AnimatedBackgroundElements() {
@@ -236,7 +265,7 @@ private fun AnimatedBackgroundElements() {
         label = "offset2"
     )
     
-    // Decorative blurred circles
+    // Primary red glow
     Box(
         modifier = Modifier
             .offset(x = (-50).dp + offset1.dp, y = 100.dp + offset2.dp)
@@ -245,7 +274,7 @@ private fun AnimatedBackgroundElements() {
             .background(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        RosePrimary.copy(alpha = 0.3f),
+                        RosePrimary.copy(alpha = 0.35f),
                         Color.Transparent
                     )
                 ),
@@ -253,6 +282,7 @@ private fun AnimatedBackgroundElements() {
             )
     )
     
+    // Dark ruby glow
     Box(
         modifier = Modifier
             .offset(x = 250.dp + offset2.dp, y = 300.dp + offset1.dp)
@@ -261,7 +291,7 @@ private fun AnimatedBackgroundElements() {
             .background(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        VioletSecondary.copy(alpha = 0.25f),
+                        RoseDark.copy(alpha = 0.4f),
                         Color.Transparent
                     )
                 ),
@@ -269,6 +299,7 @@ private fun AnimatedBackgroundElements() {
             )
     )
     
+    // Ember orange accent
     Box(
         modifier = Modifier
             .offset(x = 50.dp + offset1.dp, y = 600.dp - offset2.dp)
@@ -277,7 +308,7 @@ private fun AnimatedBackgroundElements() {
             .background(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        AccentTeal.copy(alpha = 0.2f),
+                        AccentCoral.copy(alpha = 0.25f),
                         Color.Transparent
                     )
                 ),
@@ -292,9 +323,12 @@ private fun AnimatedBackgroundElements() {
 @Composable
 private fun WelcomeContent(
     isVisible: Boolean,
+    lastRoomInfo: LastRoomInfo?,
     onCreateRoom: () -> Unit,
     onJoinRoom: () -> Unit,
-    onNavigateToMediaLibrary: () -> Unit = {}
+    onNavigateToMediaLibrary: () -> Unit = {},
+    onReSync: (LastRoomInfo) -> Unit = {},
+    onDismissReSync: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -346,7 +380,24 @@ private fun WelcomeContent(
             )
         }
         
-        Spacer(modifier = Modifier.height(64.dp))
+        Spacer(modifier = Modifier.height(48.dp))
+        
+        // Re-Sync Banner (if available)
+        AnimatedVisibility(
+            visible = isVisible && lastRoomInfo != null,
+            enter = fadeIn(animationSpec = tween(500, delayMillis = 500)) + 
+                   slideInVertically(initialOffsetY = { 50 })
+        ) {
+            lastRoomInfo?.let { info ->
+                ReSyncBanner(
+                    info = info,
+                    onReSync = { onReSync(info) },
+                    onDismiss = onDismissReSync
+                )
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
         
         // Create Room button
         AnimatedVisibility(
@@ -404,65 +455,100 @@ private fun WelcomeContent(
 }
 
 /**
- * Animated logo with pulsing heart
+ * Animated logo with film/play icon (Red-Black theme)
  */
 @Composable
 private fun AnimatedLogo() {
     val infiniteTransition = rememberInfiniteTransition(label = "logo")
-    val scale by infiniteTransition.animateFloat(
+    val iconScale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = 1.1f,
+        targetValue = 1.15f,
         animationSpec = infiniteRepeatable(
             animation = tween(1000, easing = EaseInOut),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "scale"
+        label = "iconScale"
     )
     
     val rotation by infiniteTransition.animateFloat(
-        initialValue = -5f,
-        targetValue = 5f,
+        initialValue = -3f,
+        targetValue = 3f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = EaseInOut),
+            animation = tween(2500, easing = EaseInOut),
             repeatMode = RepeatMode.Reverse
         ),
         label = "rotation"
     )
     
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.6f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glow"
+    )
+    
     Box(
-        modifier = Modifier
-            .size(120.dp)
-            .scale(scale)
-            .rotate(rotation)
-            .clip(CircleShape)
-            .background(
-                brush = Brush.linearGradient(
-                    colors = listOf(RosePrimary, VioletSecondary)
-                )
-            ),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = Icons.Default.Favorite,
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.size(56.dp)
+        // Glow effect
+        Box(
+            modifier = Modifier
+                .size(150.dp)
+                .blur(40.dp)
+                .background(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            RosePrimary.copy(alpha = glowAlpha),
+                            Color.Transparent
+                        )
+                    ),
+                    shape = CircleShape
+                )
         )
         
-        // Overlay play icon
-        Icon(
-            imageVector = Icons.Default.PlayArrow,
-            contentDescription = null,
-            tint = Color.White,
+        // Main logo circle
+        Box(
             modifier = Modifier
-                .size(32.dp)
-                .offset(x = 2.dp)
-        )
+                .size(120.dp)
+                .rotate(rotation)
+                .clip(CircleShape)
+                .background(
+                    brush = Brush.linearGradient(
+                        colors = listOf(RosePrimary, RoseDark)
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            // Film/Play icon
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.scale(iconScale)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Movie,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.3f),
+                    modifier = Modifier
+                        .size(70.dp)
+                        .offset(x = (-2).dp, y = (-2).dp)
+                )
+                
+                Icon(
+                    imageVector = Icons.Default.PlayCircleFilled,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(56.dp)
+                )
+            }
+        }
     }
 }
 
 /**
- * Gradient button component
+ * Gradient button component with press animation
  */
 @Composable
 private fun GradientButton(
@@ -470,45 +556,92 @@ private fun GradientButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit
 ) {
-    Button(
-        onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color.Transparent
+    var isPressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.95f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMedium),
+        label = "buttonScale"
+    )
+    
+    val infiniteTransition = rememberInfiniteTransition(label = "buttonGlow")
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 0.4f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse
         ),
-        contentPadding = PaddingValues(0.dp)
-    ) {
+        label = "glowAlpha"
+    )
+    
+    Box(contentAlignment = Alignment.Center) {
+        // Glow behind button
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .height(60.dp)
+                .scale(1.05f)
+                .alpha(glowAlpha)
+                .blur(12.dp)
                 .background(
                     brush = Brush.horizontalGradient(
-                        colors = listOf(RosePrimary, VioletSecondary)
+                        colors = listOf(RosePrimary, RoseDark)
                     ),
-                    shape = RoundedCornerShape(16.dp)
-                ),
-            contentAlignment = Alignment.Center
+                    shape = RoundedCornerShape(18.dp)
+                )
+        )
+        
+        Button(
+            onClick = {
+                isPressed = true
+                onClick()
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .scale(scale),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.Transparent
+            ),
+            contentPadding = PaddingValues(0.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(RosePrimary, RoseDark)
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = Color.White
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = Color.White
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
+        }
+    }
+    
+    LaunchedEffect(isPressed) {
+        if (isPressed) {
+            delay(150)
+            isPressed = false
         }
     }
 }
@@ -1354,6 +1487,91 @@ private fun PermissionRequestContent(
                         style = MaterialTheme.typography.bodySmall,
                         color = OnDarkSecondary
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Banner for re-syncing to previous room
+ */
+@Composable
+private fun ReSyncBanner(
+    info: LastRoomInfo,
+    onReSync: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(),
+        colors = CardDefaults.cardColors(
+            containerColor = SurfaceDark.copy(alpha = 0.9f)
+        ),
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, RosePrimary.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(RosePrimary.copy(alpha=0.2f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = null,
+                        tint = RosePrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.width(12.dp))
+                
+                Column {
+                    Text(
+                        text = "Recent Room Found",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Resume ${if(info.role == "host") "hosting" else "watching"} (${info.roomId})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnDarkSecondary
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = OnDarkSecondary),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, OnDarkSecondary.copy(alpha = 0.3f))
+                ) {
+                    Text("Dismiss")
+                }
+                
+                Button(
+                    onClick = onReSync,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = RosePrimary)
+                ) {
+                    Text("Re-Sync")
                 }
             }
         }

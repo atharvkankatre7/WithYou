@@ -5,16 +5,34 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     
-    <!-- Dark gradient background -->
+    <!-- Red-Black themed app icon background -->
+    
+    <!-- Base dark background -->
     <path
         android:pathData="M0,0 L108,0 L108,108 L0,108 Z"
-        android:fillColor="#1A1A2E"/>
+        android:fillColor="#0D0D0D"/>
     
-    <!-- Gradient overlay - top to bottom -->
+    <!-- Dark red gradient overlay - top -->
     <path
         android:pathData="M0,0 L108,0 L108,54 L0,54 Z"
-        android:fillColor="#16213E"
-        android:fillAlpha="0.5"/>
+        android:fillColor="#1A0505"
+        android:fillAlpha="0.6"/>
     
-</vector>
+    <!-- Subtle red gradient - bottom -->
+    <path
+        android:pathData="M0,54 L108,54 L108,108 L0,108 Z"
+        android:fillColor="#2D0A0A"
+        android:fillAlpha="0.4"/>
+    
+    <!-- Corner accent glow -->
+    <path
+        android:pathData="M0,0 L40,0 L0,40 Z"
+        android:fillColor="#DC143C"
+        android:fillAlpha="0.15"/>
+    
+    <path
+        android:pathData="M108,108 L68,108 L108,68 Z"
+        android:fillColor="#DC143C"
+        android:fillAlpha="0.15"/>
 
+</vector>

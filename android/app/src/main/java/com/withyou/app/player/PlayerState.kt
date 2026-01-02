@@ -29,6 +29,7 @@ data class PlayerUiState(
 enum class AspectMode {
     FIT,        // Fit to screen (letterbox/pillarbox)
     FILL,       // Fill screen (crop if needed)
+    FIT_SCREEN, // Fit Screen (Stretch to screen dimensions)
     ORIGINAL,   // Original aspect ratio
     CUSTOM      // Custom aspect ratio (16:9, 4:3, etc.)
 }

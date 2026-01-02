@@ -32,6 +32,7 @@ import com.withyou.app.ui.theme.*
 enum class AspectRatioOption(val displayName: String, val ratio: Float?) {
     FIT("Fit", null),              // Fit to screen maintaining aspect ratio
     FILL("Fill", null),            // Fill screen (may crop)
+    FIT_SCREEN("Fit Screen", null), // Stretch to screen
     RATIO_16_9("16:9", 16f / 9f),
     RATIO_4_3("4:3", 4f / 3f),
     RATIO_21_9("21:9", 21f / 9f),  // Ultrawide

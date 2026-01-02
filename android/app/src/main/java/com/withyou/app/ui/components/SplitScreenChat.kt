@@ -11,6 +11,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -25,6 +28,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
@@ -122,6 +127,10 @@ fun SideChatPanel(
     val focusManager = LocalFocusManager.current
     var messageText by remember { mutableStateOf("") }
     
+    // Get orientation to determine layout
+    val configuration = LocalConfiguration.current
+    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+    
     // Get IME (keyboard) insets to handle keyboard properly
     val imePadding = WindowInsets.ime.asPaddingValues()
     
@@ -156,143 +165,262 @@ fun SideChatPanel(
             // and allows TextField to grow naturally without clipping
             .windowInsetsPadding(WindowInsets.ime)
     ) {
-        // Header
-        Surface(
-            color = SurfaceDark,
-            shadowElevation = 4.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        // PORTRAIT MODE: Input at TOP, messages below
+        // LANDSCAPE MODE: Header → Messages → Input at bottom
+        
+        if (isPortrait) {
+            // ===== PORTRAIT: Input field at TOP (replaces header) =====
+            Surface(
+                color = SurfaceVariantDark,
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Chat,
-                        contentDescription = null,
-                        tint = RosePrimary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        text = "Chat",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close chat",
-                        tint = OnDarkSecondary
-                    )
-                }
-            }
-        }
-        
-        // Messages list
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 12.dp)
-        ) {
-            if (messages.isEmpty()) {
-                item {
-                    EmptyChatState()
-                }
-            } else {
-                items(messages) { message ->
-                    CompactChatBubble(message = message)
-                }
-            }
-        }
-        
-        // Input field
-        // NO IME padding here - Column already handles it
-        // This allows TextField to grow naturally without height restrictions
-        Surface(
-            color = SurfaceVariantDark,
-            modifier = Modifier
-                .fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                // Allow Row to resize vertically so TextField can grow
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Text input
-                // Remove height constraints to ensure typed text is fully visible
-                OutlinedTextField(
-                    value = messageText,
-                    onValueChange = { messageText = it },
-                    placeholder = { 
-                        Text(
-                            "Type message...", 
-                            color = OnDarkSecondary,
-                            fontSize = 14.sp
-                        ) 
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        // Use defaultMinSize instead of heightIn to allow text to be fully visible
-                        .defaultMinSize(minHeight = 44.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = RosePrimary,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedContainerColor = Color.White.copy(alpha = 0.08f),
-                        unfocusedContainerColor = Color.White.copy(alpha = 0.08f),
-                        cursorColor = RosePrimary,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(20.dp),
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(
-                        onSend = {
+                    // Close button
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close chat",
+                            tint = OnDarkSecondary
+                        )
+                    }
+                    
+                    // Text input at TOP - always visible
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 48.dp)
+                            .background(
+                                color = Color.White.copy(alpha = 0.08f),
+                                shape = RoundedCornerShape(24.dp)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (messageText.isNotEmpty()) RosePrimary else Color.Transparent,
+                                shape = RoundedCornerShape(24.dp)
+                            )
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (messageText.isEmpty()) {
+                            Text(
+                                text = "Type message...",
+                                color = OnDarkSecondary,
+                                fontSize = 15.sp
+                            )
+                        }
+                        BasicTextField(
+                            value = messageText,
+                            onValueChange = { messageText = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                lineHeight = 20.sp
+                            ),
+                            cursorBrush = SolidColor(RosePrimary),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(
+                                onSend = {
+                                    if (messageText.isNotBlank()) {
+                                        onSendMessage(messageText)
+                                        messageText = ""
+                                        focusManager.clearFocus()
+                                    }
+                                }
+                            ),
+                            maxLines = 2
+                        )
+                    }
+                    
+                    // Send button
+                    FloatingActionButton(
+                        onClick = {
                             if (messageText.isNotBlank()) {
                                 onSendMessage(messageText)
                                 messageText = ""
-                                focusManager.clearFocus() // Close keyboard after sending
+                                focusManager.clearFocus()
                             }
-                        }
-                    ),
-                    maxLines = 3
-                )
-                
-                // Send button
-                FloatingActionButton(
-                    onClick = {
-                        if (messageText.isNotBlank()) {
-                            onSendMessage(messageText)
-                            messageText = ""
-                            focusManager.clearFocus()
-                        }
-                    },
-                    containerColor = RosePrimary,
-                    modifier = Modifier.size(44.dp)
+                        },
+                        containerColor = RosePrimary,
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Send",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+            
+            // Messages list (below input in portrait)
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 12.dp)
+            ) {
+                if (messages.isEmpty()) {
+                    item { EmptyChatState() }
+                } else {
+                    items(messages) { message ->
+                        CompactChatBubble(message = message)
+                    }
+                }
+            }
+        } else {
+            // ===== LANDSCAPE: Standard layout - Header → Messages → Input at bottom =====
+            // Header
+            Surface(
+                color = SurfaceDark,
+                shadowElevation = 4.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Send,
-                        contentDescription = "Send",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Chat,
+                            contentDescription = null,
+                            tint = RosePrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "Chat",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close chat",
+                            tint = OnDarkSecondary
+                        )
+                    }
+                }
+            }
+            
+            // Messages list
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 12.dp)
+            ) {
+                if (messages.isEmpty()) {
+                    item { EmptyChatState() }
+                } else {
+                    items(messages) { message ->
+                        CompactChatBubble(message = message)
+                    }
+                }
+            }
+            
+            // Input field at bottom (landscape)
+            Surface(
+                color = SurfaceVariantDark,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 52.dp)
+                            .background(
+                                color = Color.White.copy(alpha = 0.08f),
+                                shape = RoundedCornerShape(24.dp)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (messageText.isNotEmpty()) RosePrimary else Color.Transparent,
+                                shape = RoundedCornerShape(24.dp)
+                            )
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (messageText.isEmpty()) {
+                            Text(
+                                text = "Type message...",
+                                color = OnDarkSecondary,
+                                fontSize = 15.sp
+                            )
+                        }
+                        BasicTextField(
+                            value = messageText,
+                            onValueChange = { messageText = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                lineHeight = 20.sp
+                            ),
+                            cursorBrush = SolidColor(RosePrimary),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(
+                                onSend = {
+                                    if (messageText.isNotBlank()) {
+                                        onSendMessage(messageText)
+                                        messageText = ""
+                                        focusManager.clearFocus()
+                                    }
+                                }
+                            ),
+                            maxLines = 3
+                        )
+                    }
+                    
+                    FloatingActionButton(
+                        onClick = {
+                            if (messageText.isNotBlank()) {
+                                onSendMessage(messageText)
+                                messageText = ""
+                                focusManager.clearFocus()
+                            }
+                        },
+                        containerColor = RosePrimary,
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Send",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }

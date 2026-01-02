@@ -75,6 +75,7 @@ class LibVLCVideoPlayer(
     enum class VideoScaleMode {
         FIT,    // best fit inside, keep aspect (no overflow) - uses SURFACE_BEST_FIT
         FILL,   // fill screen, crop if needed - uses SURFACE_FILL
+        FIT_SCREEN, // force fit to screen dimensions (stretch)
         ORIGINAL // no scaling, use video pixel size
     }
 
@@ -723,8 +724,7 @@ class LibVLCVideoPlayer(
                 Timber.d("$TAG: Scale mode = FIT (aspectRatio=null, scale=0f)")
             }
             VideoScaleMode.FILL -> {
-                // FILL: Force video to fill the surface using aspect ratio
-                // Add 4px padding to hide any rounding artifacts
+                // FILL: Force video to fill the surface using aspect ratio (this effectively stretches/zooms)
                 val w = if (surfaceWidth > 0) surfaceWidth + 4 else videoLayout.width + 4
                 val h = if (surfaceHeight > 0) surfaceHeight + 4 else videoLayout.height + 4
                 
@@ -733,9 +733,22 @@ class LibVLCVideoPlayer(
                     mediaPlayer.scale = 0f
                     Timber.d("$TAG: Scale mode = FILL (aspectRatio=$w:$h, scale=0f)")
                 } else {
-                    // Fallback to SURFACE_FILL if dimensions not available
                     mediaPlayer.setVideoScale(MediaPlayer.ScaleType.SURFACE_FILL)
                     Timber.d("$TAG: Scale mode = FILL (SURFACE_FILL fallback)")
+                }
+            }
+            VideoScaleMode.FIT_SCREEN -> {
+                // FIT_SCREEN: Analyzes phone screen size and fits content perfectly (Stretch)
+                val w = if (surfaceWidth > 0) surfaceWidth else videoLayout.width
+                val h = if (surfaceHeight > 0) surfaceHeight else videoLayout.height
+                
+                if (w > 0 && h > 0) {
+                    // Force aspect ratio to match screen exactly
+                    mediaPlayer.aspectRatio = "$w:$h"
+                    mediaPlayer.scale = 0f
+                    Timber.d("$TAG: Scale mode = FIT_SCREEN (aspectRatio=$w:$h)")
+                } else {
+                    Timber.w("$TAG: Cannot set FIT_SCREEN - dimensions unknown")
                 }
             }
             VideoScaleMode.ORIGINAL -> {

@@ -5,48 +5,94 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     
-    <!-- Background circle with gradient effect -->
+    <!-- Red-Black themed app icon with Film/Play design -->
+    
+    <!-- Center the icon group -->
     <group
         android:translateX="54"
         android:translateY="54">
         
-        <!-- Outer glow -->
+        <!-- Outer glow ring -->
         <path
-            android:pathData="M0,-36 A36,36 0 1,1 0,36 A36,36 0 1,1 0,-36"
-            android:fillColor="#E91E63"
-            android:fillAlpha="0.3"/>
+            android:pathData="M0,-38 A38,38 0 1,1 0,38 A38,38 0 1,1 0,-38"
+            android:fillColor="#DC143C"
+            android:fillAlpha="0.25"/>
         
-        <!-- Main circle -->
+        <!-- Main circle with crimson red -->
         <path
-            android:pathData="M0,-30 A30,30 0 1,1 0,30 A30,30 0 1,1 0,-30"
-            android:fillColor="#E91E63"/>
+            android:pathData="M0,-32 A32,32 0 1,1 0,32 A32,32 0 1,1 0,-32"
+            android:fillColor="#DC143C"/>
             
-        <!-- Gradient overlay (purple tint) -->
+        <!-- Dark ruby gradient overlay for depth -->
         <path
-            android:pathData="M15,-26 A30,30 0 0,1 26,15 L0,0 Z"
-            android:fillColor="#7C3AED"
+            android:pathData="M16,-28 A32,32 0 0,1 28,16 L0,0 Z"
+            android:fillColor="#8B0000"
+            android:fillAlpha="0.5"/>
+            
+        <!-- Bottom shadow for 3D effect -->
+        <path
+            android:pathData="M-20,20 A32,32 0 0,0 20,20 L0,32 Z"
+            android:fillColor="#4A0000"
             android:fillAlpha="0.4"/>
         
     </group>
     
-    <!-- Heart icon -->
+    <!-- Film strip / Play button icon -->
     <group
         android:translateX="54"
-        android:translateY="52">
-        <path
-            android:pathData="M0,-12 C-3,-15 -9,-15 -12,-12 C-15,-9 -15,-3 -12,0 L0,12 L12,0 C15,-3 15,-9 12,-12 C9,-15 3,-15 0,-12 Z"
-            android:fillColor="#FFFFFF"/>
-    </group>
-    
-    <!-- Play triangle overlay -->
-    <group
-        android:translateX="56"
         android:translateY="54">
+        
+        <!-- Film strip frame - left -->
         <path
-            android:pathData="M-4,-6 L-4,6 L6,0 Z"
+            android:pathData="M-18,-12 L-12,-12 L-12,12 L-18,12 Z"
+            android:fillColor="#FFFFFF"
+            android:fillAlpha="0.3"/>
+        
+        <!-- Film strip holes left -->
+        <path
+            android:pathData="M-17,-9 L-13,-9 L-13,-6 L-17,-6 Z"
+            android:fillColor="#DC143C"
+            android:fillAlpha="0.6"/>
+        <path
+            android:pathData="M-17,-3 L-13,-3 L-13,0 L-17,0 Z"
+            android:fillColor="#DC143C"
+            android:fillAlpha="0.6"/>
+        <path
+            android:pathData="M-17,3 L-13,3 L-13,6 L-17,6 Z"
+            android:fillColor="#DC143C"
+            android:fillAlpha="0.6"/>
+        
+        <!-- Film strip frame - right -->
+        <path
+            android:pathData="M12,-12 L18,-12 L18,12 L12,12 Z"
+            android:fillColor="#FFFFFF"
+            android:fillAlpha="0.3"/>
+            
+        <!-- Film strip holes right -->
+        <path
+            android:pathData="M13,-9 L17,-9 L17,-6 L13,-6 Z"
+            android:fillColor="#DC143C"
+            android:fillAlpha="0.6"/>
+        <path
+            android:pathData="M13,-3 L17,-3 L17,0 L13,0 Z"
+            android:fillColor="#DC143C"
+            android:fillAlpha="0.6"/>
+        <path
+            android:pathData="M13,3 L17,3 L17,6 L13,6 Z"
+            android:fillColor="#DC143C"
+            android:fillAlpha="0.6"/>
+        
+        <!-- Central play button triangle -->
+        <path
+            android:pathData="M-6,-10 L-6,10 L10,0 Z"
+            android:fillColor="#FFFFFF"/>
+            
+        <!-- Play button inner highlight -->
+        <path
+            android:pathData="M-4,-7 L-4,7 L7,0 Z"
             android:fillColor="#FFFFFF"
             android:fillAlpha="0.9"/>
+        
     </group>
-    
-</vector>
 
+</vector>

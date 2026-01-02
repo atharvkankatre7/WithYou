@@ -2,6 +2,7 @@ package com.withyou.app.ui.navigation
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -36,20 +37,20 @@ fun AppNavigation() {
         navController = navController, 
         startDestination = "auth", // After auth, navigates to media_library
         enterTransition = { 
-            fadeIn(animationSpec = tween(300)) + 
-            slideInHorizontally(initialOffsetX = { 100 }, animationSpec = tween(300))
+            fadeIn(animationSpec = tween(450, easing = FastOutSlowInEasing)) + 
+            slideInHorizontally(initialOffsetX = { 200 }, animationSpec = tween(450, easing = FastOutSlowInEasing))
         },
         exitTransition = { 
-            fadeOut(animationSpec = tween(300)) + 
-            slideOutHorizontally(targetOffsetX = { -100 }, animationSpec = tween(300))
+            fadeOut(animationSpec = tween(350, easing = FastOutSlowInEasing)) + 
+            slideOutHorizontally(targetOffsetX = { -200 }, animationSpec = tween(350, easing = FastOutSlowInEasing))
         },
         popEnterTransition = { 
-            fadeIn(animationSpec = tween(300)) + 
-            slideInHorizontally(initialOffsetX = { -100 }, animationSpec = tween(300))
+            fadeIn(animationSpec = tween(450, easing = FastOutSlowInEasing)) + 
+            slideInHorizontally(initialOffsetX = { -200 }, animationSpec = tween(450, easing = FastOutSlowInEasing))
         },
         popExitTransition = { 
-            fadeOut(animationSpec = tween(300)) + 
-            slideOutHorizontally(targetOffsetX = { 100 }, animationSpec = tween(300))
+            fadeOut(animationSpec = tween(350, easing = FastOutSlowInEasing)) + 
+            slideOutHorizontally(targetOffsetX = { 200 }, animationSpec = tween(350, easing = FastOutSlowInEasing))
         }
     ) {
         composable("auth") {

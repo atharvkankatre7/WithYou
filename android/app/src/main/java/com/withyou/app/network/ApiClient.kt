@@ -284,6 +284,80 @@ class ApiClient(private val authToken: String) {
             throw e
         }
     }
+    /**
+     * Leave room temporarily (pause and mark offline)
+     */
+    suspend fun leaveTemporary(roomId: String): Unit = withContext(Dispatchers.IO) {
+        val url = "${BuildConfig.SERVER_URL}/api/rooms/$roomId/leave-temporary"
+        
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $authToken")
+            .post("{}".toRequestBody("application/json".toMediaType()))
+            .build()
+        
+        Timber.d("Leaving room temporarily: $roomId")
+        
+        try {
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) {
+                // Log but don't crash - this is a best-effort call often made during shutdown
+                Timber.w("Failed to leave room temporarily: ${response.code}")
+            }
+        } catch (e: Exception) {
+            Timber.w("Error leaving room temporarily: ${e.message}")
+        }
+    }
+
+    /**
+     * Rejoin room and get state
+     */
+    suspend fun rejoinRoom(roomId: String): RejoinRoomResponse = withContext(Dispatchers.IO) {
+        val url = "${BuildConfig.SERVER_URL}/api/rooms/$roomId/rejoin"
+        
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $authToken")
+            .post("{}".toRequestBody("application/json".toMediaType()))
+            .build()
+        
+        Timber.d("Rejoining room: $roomId")
+        
+        try {
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+            
+            if (!response.isSuccessful) {
+                throw ApiException("Failed to rejoin room: ${response.code}", response.code)
+            }
+            
+            val json = JSONObject(responseBody)
+            val participantsJson = json.getJSONArray("participants")
+            val participantsList = mutableListOf<ParticipantInfo>()
+            
+            for (i in 0 until participantsJson.length()) {
+                val p = participantsJson.getJSONObject(i)
+                participantsList.add(
+                    ParticipantInfo(
+                        userId = p.getString("userId"),
+                        role = p.getString("role"),
+                        isOnline = p.optBoolean("isOnline", false)
+                    )
+                )
+            }
+            
+            RejoinRoomResponse(
+                roomId = json.getString("roomId"),
+                videoId = json.getString("videoId"),
+                playbackState = json.getString("playbackState"),
+                currentPosition = json.optLong("currentPosition", 0),
+                participants = participantsList
+            )
+        } catch (e: Exception) {
+            Timber.e(e, "Error rejoining room")
+            throw if (e is ApiException) e else ApiException("Error rejoining room: ${e.message}", 0)
+        }
+    }
 }
 
 // Response models
@@ -301,6 +375,20 @@ data class ValidateRoomResponse(
     val hashMatches: Boolean,
     val expiresAt: String,
     val requiresPasscode: Boolean
+)
+
+data class RejoinRoomResponse(
+    val roomId: String,
+    val videoId: String,
+    val playbackState: String,
+    val currentPosition: Long,
+    val participants: List<ParticipantInfo>
+)
+
+data class ParticipantInfo(
+    val userId: String,
+    val role: String,
+    val isOnline: Boolean
 )
 
 class ApiException(message: String, val code: Int) : Exception(message)

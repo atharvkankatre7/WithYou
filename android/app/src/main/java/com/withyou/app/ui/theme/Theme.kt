@@ -21,52 +21,57 @@ import androidx.core.view.WindowCompat
 
 // ============================================
 // WithYou Custom Color Palette
-// Romantic & Modern theme for couples
+// Bold Red & Black Premium Theme
 // ============================================
 
-// Primary Colors - Rose/Pink tones
-val RosePrimary = Color(0xFFE91E63)
-val RoseLight = Color(0xFFFF6090)
-val RoseDark = Color(0xFFB0003A)
+// Primary Colors - Crimson Red tones
+val RosePrimary = Color(0xFFDC143C)      // Crimson Red
+val RoseLight = Color(0xFFFF4444)        // Bright Red
+val RoseDark = Color(0xFF8B0000)         // Dark Ruby
 
-// Secondary Colors - Deep Violet
-val VioletSecondary = Color(0xFF7C3AED)
-val VioletLight = Color(0xFFA855F7)
-val VioletDark = Color(0xFF5B21B6)
+// Secondary Colors - Deep Black with Red accents
+val VioletSecondary = Color(0xFF2A2A2A)  // Charcoal Black
+val VioletLight = Color(0xFFFF2D2D)      // Neon Red
+val VioletDark = Color(0xFF0D0D0D)       // Deep Black
 
 // Accent Colors
-val AccentGold = Color(0xFFFFD700)
-val AccentCoral = Color(0xFFFF6B6B)
-val AccentTeal = Color(0xFF14B8A6)
+val AccentGold = Color(0xFFFFD700)       // Gold (kept)
+val AccentCoral = Color(0xFFFF6B35)      // Ember Orange
+val AccentTeal = Color(0xFFFF4757)       // Bright Coral Red
 
-// Background Colors - Dark Mode
-val BackgroundDark = Color(0xFF0A0A0F)
-val SurfaceDark = Color(0xFF1A1A2E)
-val SurfaceVariantDark = Color(0xFF2D2D44)
-val CardDark = Color(0xFF16213E)
+// Background Colors - Dark Mode (Pure Black)
+val BackgroundDark = Color(0xFF0D0D0D)   // Jet Black
+val SurfaceDark = Color(0xFF141414)      // Obsidian
+val SurfaceVariantDark = Color(0xFF1C1C1E) // Dark Charcoal
+val CardDark = Color(0xFF1A1A1A)         // Smoky Black
 
-// Background Colors - Light Mode
-val BackgroundLight = Color(0xFFFFFBFE)
-val SurfaceLight = Color(0xFFF8F9FA)
-val SurfaceVariantLight = Color(0xFFE9ECEF)
-val CardLight = Color(0xFFFFFFFF)
+// Background Colors - Light Mode (Dark theme only for this app)
+val BackgroundLight = Color(0xFF121212)
+val SurfaceLight = Color(0xFF1E1E1E)
+val SurfaceVariantLight = Color(0xFF2A2A2A)
+val CardLight = Color(0xFF252525)
 
 // Text Colors
 val OnDarkPrimary = Color(0xFFFFFFFF)
-val OnDarkSecondary = Color(0xFFB8B8D0)
-val OnLightPrimary = Color(0xFF1A1A2E)
-val OnLightSecondary = Color(0xFF6C757D)
+val OnDarkSecondary = Color(0xFFB0B0B0)
+val OnLightPrimary = Color(0xFFFFFFFF)
+val OnLightSecondary = Color(0xFF909090)
 
 // Status Colors
 val SuccessGreen = Color(0xFF4CAF50)
 val WarningOrange = Color(0xFFFF9800)
-val ErrorRed = Color(0xFFF44336)
+val ErrorRed = Color(0xFFFF4444)         // Brighter red for errors
 val InfoBlue = Color(0xFF2196F3)
 
-// Gradient Colors
-val GradientStart = Color(0xFF1A1A2E)
-val GradientMiddle = Color(0xFF16213E)
-val GradientEnd = Color(0xFF0F3460)
+// Gradient Colors - Red to Black
+val GradientStart = Color(0xFF0D0D0D)    // Pure Black
+val GradientMiddle = Color(0xFF1A0A0A)   // Black with red tint
+val GradientEnd = Color(0xFF2D0A0A)      // Dark red tint
+
+// New: Ember/Particle Colors
+val EmberRed = Color(0xFFFF6B6B)
+val EmberOrange = Color(0xFFFF8C42)
+val GlowRed = Color(0xFFFF4444)
 
 // ============================================
 // Color Schemes
@@ -195,17 +200,24 @@ fun ContentSyncTheme(
 // Custom color properties
 object WithYouColors {
     val rose = RosePrimary
-    val violet = VioletSecondary
+    val crimson = RosePrimary
+    val black = VioletSecondary
     val gold = AccentGold
     val coral = AccentCoral
-    val teal = AccentTeal
+    val ember = AccentTeal
     
-    val gradientPrimary = listOf(RosePrimary, VioletSecondary)
+    // Red-Black gradients
+    val gradientPrimary = listOf(RosePrimary, RoseDark)
     val gradientBackground = listOf(GradientStart, GradientMiddle, GradientEnd)
     val gradientCard = listOf(SurfaceDark, CardDark)
+    val gradientEmber = listOf(EmberRed, EmberOrange)
+    val gradientNeon = listOf(RoseLight, RosePrimary)
     
     val success = SuccessGreen
     val warning = WarningOrange
     val error = ErrorRed
     val info = InfoBlue
+    
+    // Ember particle colors
+    val emberColors = listOf(EmberRed, EmberOrange, RoseLight, GlowRed)
 }

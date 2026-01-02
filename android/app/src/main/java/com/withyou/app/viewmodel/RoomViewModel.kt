@@ -91,6 +91,10 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
     private val _chatMessages = MutableStateFlow<List<com.withyou.app.ui.components.ChatMessage>>(emptyList())
     val chatMessages: StateFlow<List<com.withyou.app.ui.components.ChatMessage>> = _chatMessages.asStateFlow()
     
+    // Partner reactions - emojis sent by partner to display on both screens
+    private val _partnerReaction = MutableStateFlow<String?>(null)
+    val partnerReaction: StateFlow<String?> = _partnerReaction.asStateFlow()
+    
     // Current user ID for determining if message is from "me"
     private val currentUserId: String?
         get() = FirebaseAuth.getInstance().currentUser?.uid
@@ -111,6 +115,9 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
     private var positionSyncJob: Job? = null
     private var rttMeasurementJob: Job? = null
     
+    // Persistence
+    private val lastRoomManager = LastRoomManager(application)
+    
     // App lifecycle tracking
     private var isAppInBackground = false
     private val lifecycleObserver = object : LifecycleEventObserver {
@@ -119,12 +126,44 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
                 Lifecycle.Event.ON_STOP -> {
                     // App went to background
                     isAppInBackground = true
-                    Timber.i("App went to background - suspending polling and pausing video")
+                    Timber.i("App went to background - attempting to save state and pause")
+                    
                     sharedPlayerEngine?.let { engine ->
                         // Suspend polling to save battery and CPU
                         engine.suspendPolling()
-                        // Pause video but keep socket connected for sync
+                        // Pause video locally
                         engine.pause()
+                    }
+                    
+                    // Save last room state and notify server
+                    val currentRoomId = _roomId.value
+                    if (currentRoomId != null) {
+                        try {
+                            val pos = sharedPlayerEngine?.getCurrentPosition() ?: 0L
+                            lastRoomManager.saveLastRoom(
+                                currentRoomId,
+                                currentUserId ?: "",
+                                if (_isHost.value) "host" else "follower",
+                                fileMetadata?.hash,
+                                pos
+                            )
+                            Timber.d("Saved last room state: $currentRoomId at $pos ms")
+                            
+                            // Send leave-temporary request
+                            // using independent scope to ensure it runs even as activity stops
+                            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                                try {
+                                    // Only send if we have a token (user logged in)
+                                    val token = getFirebaseToken()
+                                    val client = ApiClient(token)
+                                    client.leaveTemporary(currentRoomId)
+                                } catch (e: Exception) {
+                                    Timber.w("Failed to send leave-temporary: ${e.message}")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Timber.e(e, "Error saving state on background")
+                        }
                     }
                 }
                 Lifecycle.Event.ON_START -> {
@@ -381,6 +420,59 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     /**
+     * Re-sync room (rejoin previous session)
+     */
+    fun reSyncRoom(roomId: String, expectedHash: String?) {
+        viewModelScope.launch {
+            try {
+                val metadata = fileMetadata ?: throw IllegalStateException("No file loaded")
+                
+                // Verify file hash matches previous room's file
+                if (expectedHash != null && metadata.hash != expectedHash) {
+                    Timber.w("File hash mismatch during re-sync. Expected: $expectedHash, Actual: ${metadata.hash}")
+                }
+                
+                _uiState.value = RoomUiState.JoiningRoom
+                
+                val authToken = getFirebaseToken()
+                val apiClient = ApiClient(authToken)
+                
+                // Call rejoin API
+                Timber.i("Calling rejoinRoom API...")
+                val response = apiClient.rejoinRoom(roomId)
+                
+                _roomId.value = roomId
+                
+                // Determine our role from participants list
+                val myUserId = FirebaseAuth.getInstance().currentUser?.uid
+                val myParticipant = response.participants.find { it.userId == myUserId }
+                val myRole = myParticipant?.role ?: "follower" // Default to follower if not found
+                _isHost.value = (myRole == "host")
+                
+                Timber.i("Re-syncing room: $roomId as $myRole")
+                
+                // Connect to socket
+                connectSocket(authToken, roomId, response.videoId, isHost = _isHost.value)
+                
+                // Apply playback state
+                val seekPos = kotlin.math.max(response.currentPosition - 20000, 0L)
+                Timber.i("Seeking to re-sync position: $seekPos ms (original: ${response.currentPosition})")
+                
+                // Wait for player to be ready (loadMedia happens separately)
+                // sharedPlayerEngine should be valid here as HomeScreen calls loadVideo first
+                sharedPlayerEngine?.seekTo(seekPos)
+                sharedPlayerEngine?.pause() // Always start paused per requirement
+                
+                _uiState.value = RoomUiState.RoomReady(roomId, "")
+                
+            } catch (e: Exception) {
+                Timber.e(e, "Error re-syncing room")
+                _uiState.value = RoomUiState.Error("Failed to re-sync room: ${e.message}")
+            }
+        }
+    }
+    
+    /**
      * Connect to socket and setup event handlers
      */
     private fun connectSocket(authToken: String, roomId: String, fileHash: String, isHost: Boolean) {
@@ -418,6 +510,15 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
                 _connectionStatus.value = "In Room"
                 _syncStatus.value = "Synced"
                 Timber.i("Successfully joined room")
+                
+                // Save room info to local cache
+                lastRoomManager.saveLastRoom(
+                    roomId,
+                    currentUserId ?: "",
+                    if (_isHost.value) "host" else "follower",
+                    fileHash,
+                    0L // Position 0 on join
+                )
                 
                 // If we're host and sync controller is ready, initialize it
                 if (_isHost.value && syncController != null) {
@@ -557,8 +658,25 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
                 Timber.e("Socket error: ${event.message}")
                 _connectionStatus.value = "Error: ${event.message}"
             }
+            is SocketEvent.Reaction -> {
+                // Handle reaction from partner
+                val reactionEvent = event.event
+                val currentUserId = FirebaseAuth.getInstance().currentUser?.uid
+                
+                // Only show partner's reactions (not our own - we already show it locally)
+                if (reactionEvent.userId != currentUserId) {
+                    Timber.i("Partner sent reaction: ${reactionEvent.type}")
+                    _partnerReaction.value = reactionEvent.type
+                    
+                    // Clear reaction after 2 seconds (for animation)
+                    viewModelScope.launch {
+                        delay(2000)
+                        _partnerReaction.value = null
+                    }
+                }
+            }
             else -> {
-                // Handle reactions, etc.
+                // Other unhandled events
             }
         }
     }

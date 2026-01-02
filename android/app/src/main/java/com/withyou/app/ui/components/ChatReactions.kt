@@ -77,7 +77,9 @@ data class ChatMessage(
 data class FloatingReaction(
     val id: String = UUID.randomUUID().toString(),
     val emoji: String,
-    val startX: Float = (Math.random() * 0.6 + 0.2).toFloat() // Random position 20-80%
+    val startX: Float = (Math.random() * 0.6 + 0.2).toFloat(), // Random position 20-80%
+    val isMe: Boolean = false, // Track if emoji is from current user
+    val color: Color = Color.White.copy(alpha = 0.9f) // Color tint for glow effect
 )
 
 /**
@@ -146,7 +148,7 @@ fun ReactionsBar(
 }
 
 /**
- * Individual reaction button
+ * Individual reaction button with increased size to prevent clipping
  */
 @Composable
 private fun ReactionButton(
@@ -162,7 +164,7 @@ private fun ReactionButton(
     
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(52.dp)  // Increased from 44.dp to prevent clipping
             .scale(scale)
             .clip(CircleShape)
             .background(Color.White.copy(alpha = 0.1f))
@@ -174,7 +176,7 @@ private fun ReactionButton(
     ) {
         Text(
             text = emoji,
-            fontSize = 24.sp
+            fontSize = 28.sp  // Increased from 24.sp
         )
     }
     
@@ -199,32 +201,35 @@ fun FloatingReactionsOverlay(
             FloatingEmojiAnimation(
                 key = reaction.id,
                 emoji = reaction.emoji,
-                startXPercent = reaction.startX
+                startXPercent = reaction.startX,
+                color = reaction.color
             )
         }
     }
 }
 
 /**
- * Single floating emoji animation
+ * Single floating emoji animation with increased size
+ * Floats up from bottom over 2 seconds with color glow effect
  */
 @Composable
 private fun FloatingEmojiAnimation(
     key: String,
     emoji: String,
-    startXPercent: Float
+    startXPercent: Float,
+    color: Color = Color.White.copy(alpha = 0.9f)
 ) {
     var isVisible by remember { mutableStateOf(true) }
     
     val animatedY by animateFloatAsState(
         targetValue = if (isVisible) 0f else -500f,
-        animationSpec = tween(2500, easing = EaseOut),
+        animationSpec = tween(2000, easing = EaseOut), // Exactly 2 seconds
         label = "y"
     )
     
     val animatedAlpha by animateFloatAsState(
         targetValue = if (isVisible) 0f else 1f,
-        animationSpec = tween(2500),
+        animationSpec = tween(2000), // Exactly 2 seconds
         label = "alpha"
     )
     
@@ -240,16 +245,35 @@ private fun FloatingEmojiAnimation(
     
     if (animatedY > -400) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val xOffset = maxWidth * startXPercent
+            // Clamp X position to prevent edge clipping (add padding of 24dp on each side)
+            val minX = 24.dp
+            val maxX = maxWidth - 60.dp  // Account for emoji size
+            val xOffset = (maxWidth * startXPercent).coerceIn(minX, maxX)
             
-            Text(
-                text = emoji,
-                fontSize = 36.sp,
+            // Emoji with color glow/shadow effect
+            Box(
                 modifier = Modifier
                     .offset(x = xOffset, y = maxHeight + animatedY.dp)
                     .alpha(1f - (animatedAlpha * 0.8f))
                     .scale(animatedScale)
-            )
+                    .padding(8.dp)  // Add padding to prevent clipping
+            ) {
+                // Shadow/glow layer
+                Text(
+                    text = emoji,
+                    fontSize = 44.sp,  // Increased from 36.sp
+                    modifier = Modifier
+                        .offset(x = 2.dp, y = 2.dp)
+                        .alpha(0.3f),
+                    color = color
+                )
+                // Main emoji
+                Text(
+                    text = emoji,
+                    fontSize = 44.sp,  // Increased from 36.sp
+                    color = Color.White
+                )
+            }
         }
     }
 }

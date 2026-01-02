@@ -32,6 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.MediaPlayer
 import java.util.concurrent.TimeUnit
+import com.withyou.app.ui.theme.RosePrimary
 
 /**
  * VLC-style video player controls with animations
@@ -74,6 +75,7 @@ fun VLCPlayerControls(
         playbackSpeed = uiState.playbackRate,
         aspectRatio = when (uiState.aspectMode) {
             com.withyou.app.player.AspectMode.FIT -> "Fit"
+            com.withyou.app.player.AspectMode.FIT_SCREEN -> "Fit Screen"
             com.withyou.app.player.AspectMode.FILL -> "Fill"
             com.withyou.app.player.AspectMode.ORIGINAL -> "Original"
             com.withyou.app.player.AspectMode.CUSTOM -> "Fit" // Default for CUSTOM, actual ratio handled separately
@@ -137,8 +139,10 @@ fun VLCPlayerControls(
     modifier: Modifier = Modifier,
     isLocked: Boolean = false // Optional lock state for backward compatibility
 ) {
-    // Controls are enabled only if user is host AND not locked
+    // Controls are enabled only if user is host AND not locked (for seek, speed, etc.)
     val controlsEnabled = isHost && !isLocked
+    // Play/Pause is allowed for ALL users (host and partner) when not locked
+    val playPauseEnabled = !isLocked
     var showSpeedMenu by remember { mutableStateOf(false) }
     var showAspectRatioMenu by remember { mutableStateOf(false) }
     var showAudioMenu by remember { mutableStateOf(false) }
@@ -281,8 +285,8 @@ fun VLCPlayerControls(
                     },
                     enabled = controlsEnabled, // Disabled if not host or locked
                     colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFFE91E63),
-                        activeTrackColor = Color(0xFFE91E63),
+                        thumbColor = RosePrimary,
+                        activeTrackColor = RosePrimary,
                         inactiveTrackColor = Color.White.copy(alpha = 0.3f),
                         disabledThumbColor = Color.Gray,
                         disabledActiveTrackColor = Color.Gray
@@ -340,7 +344,7 @@ fun VLCPlayerControls(
                                     onUserInteractionEnd()
                                 }
                             ) {
-                                listOf("Fit", "Fill", "16:9", "4:3", "21:9", "1:1").forEach { ratio ->
+                                listOf("Fit", "Fill", "Fit Screen", "16:9", "4:3", "21:9", "1:1").forEach { ratio ->
                                     DropdownMenuItem(
                                         text = { Text(ratio) },
                                         onClick = {
@@ -349,7 +353,7 @@ fun VLCPlayerControls(
                                         },
                                         leadingIcon = {
                                             if (ratio == aspectRatio) {
-                                                Icon(Icons.Default.Check, null, tint = Color(0xFFE91E63))
+                                                Icon(Icons.Default.Check, null, tint = RosePrimary)
                                             }
                                         }
                                     )
@@ -378,16 +382,16 @@ fun VLCPlayerControls(
                             size = seekButtonSize
                         )
                         
-                        // Play/Pause button with animation
+                        // Play/Pause button with animation - ALLOWED for ALL users (host AND partner)
                         AnimatedPlayPauseButton(
                             isPlaying = isPlaying,
                             onClick = {
-                                if (!controlsEnabled) return@AnimatedPlayPauseButton
+                                if (!playPauseEnabled) return@AnimatedPlayPauseButton
                                 onUserInteractionStart()
                                 onPlayPause()
                                 onUserInteractionEnd()
                             },
-                            enabled = controlsEnabled, // Disabled if not host or locked
+                            enabled = playPauseEnabled, // Partner can pause too!
                             modifier = Modifier.size(playPauseSize),
                             iconSize = playPauseIconSize
                         )
@@ -442,7 +446,7 @@ fun VLCPlayerControls(
                                     },
                                     leadingIcon = {
                                         if (currentAudioTrack == -1) {
-                                            Icon(Icons.Default.Check, null, tint = Color(0xFFE91E63))
+                                            Icon(Icons.Default.Check, null, tint = RosePrimary)
                                         }
                                     }
                                 )
@@ -455,7 +459,7 @@ fun VLCPlayerControls(
                                         },
                                         leadingIcon = {
                                             if (track.id == currentAudioTrack) {
-                                                Icon(Icons.Default.Check, null, tint = Color(0xFFE91E63))
+                                                Icon(Icons.Default.Check, null, tint = RosePrimary)
                                             }
                                         }
                                     )
@@ -492,7 +496,7 @@ fun VLCPlayerControls(
                                     },
                                     leadingIcon = {
                                         if (currentSubtitleTrack == -1) {
-                                            Icon(Icons.Default.Check, null, tint = Color(0xFFE91E63))
+                                            Icon(Icons.Default.Check, null, tint = RosePrimary)
                                         }
                                     }
                                 )
@@ -505,7 +509,7 @@ fun VLCPlayerControls(
                                         },
                                         leadingIcon = {
                                             if (track.id == currentSubtitleTrack) {
-                                                Icon(Icons.Default.Check, null, tint = Color(0xFFE91E63))
+                                                Icon(Icons.Default.Check, null, tint = RosePrimary)
                                             }
                                         }
                                     )
@@ -547,7 +551,7 @@ fun VLCPlayerControls(
                                         },
                                         leadingIcon = {
                                             if (speed == playbackSpeed) {
-                                                Icon(Icons.Default.Check, null, tint = Color(0xFFE91E63))
+                                                Icon(Icons.Default.Check, null, tint = RosePrimary)
                                             }
                                         }
                                     )
@@ -607,7 +611,7 @@ private fun AnimatedPlayPauseButton(
     Box(
         modifier = modifier
             .clip(CircleShape)
-            .background(Color(0xFFE91E63))
+            .background(RosePrimary)
             .clickable(enabled = enabled) { onClick() },
         contentAlignment = Alignment.Center
     ) {
