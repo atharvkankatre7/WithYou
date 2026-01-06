@@ -14,7 +14,10 @@ import com.withyou.app.player.PlayerEngine
 import com.withyou.app.sync.PlaybackSyncController
 import com.withyou.app.utils.*
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
@@ -100,7 +103,8 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
         get() = FirebaseAuth.getInstance().currentUser?.uid
     
     // File metadata
-    private var fileMetadata: FileMetadata? = null
+    internal var fileMetadata: FileMetadata? = null
+        private set
     private var currentVideoUri: Uri? = null
     
     // Video size for aspect ratio
@@ -139,7 +143,7 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
                     val currentRoomId = _roomId.value
                     if (currentRoomId != null) {
                         try {
-                            val pos = sharedPlayerEngine?.getCurrentPosition() ?: 0L
+                            val pos = sharedPlayerEngine?.position?.value ?: 0L
                             lastRoomManager.saveLastRoom(
                                 currentRoomId,
                                 currentUserId ?: "",
@@ -821,6 +825,8 @@ class RoomViewModel(application: Application) : AndroidViewModel(application) {
             socketManager?.disconnect()
             socketManager = null
         }
+        // Explicitly clear last room info so we don't auto-rejoin if user left intentionally
+        lastRoomManager.clearLastRoom()
         cleanup()
     }
     

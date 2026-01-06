@@ -52,6 +52,38 @@ class ApiClient(private val authToken: String) {
                 false
             }
         }
+        
+        /**
+         * Quick check if a room exists and is active (for auto-nav validation)
+         * This doesn't require an auth token - uses GET endpoint
+         * @return true if room exists and is active, false otherwise
+         */
+        suspend fun checkRoomExists(roomId: String): Boolean = withContext(Dispatchers.IO) {
+            try {
+                val url = "${BuildConfig.SERVER_URL}/api/rooms/$roomId"
+                val request = Request.Builder()
+                    .url(url)
+                    .get()
+                    .build()
+                
+                Timber.d("Checking if room exists: $roomId")
+                val response = sharedClient.newCall(request).execute()
+                
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    val json = org.json.JSONObject(body ?: "{}")
+                    val isActive = json.optBoolean("is_active", false)
+                    Timber.i("Room $roomId exists, is_active: $isActive")
+                    isActive
+                } else {
+                    Timber.w("Room $roomId not found (HTTP ${response.code})")
+                    false
+                }
+            } catch (e: Exception) {
+                Timber.w("Failed to check room existence: ${e.message}")
+                false
+            }
+        }
     }
     
     private val gson = Gson()

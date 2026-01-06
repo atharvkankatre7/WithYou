@@ -39,6 +39,8 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import androidx.compose.ui.platform.LocalConfiguration
 import com.withyou.app.ui.utils.AutoRotationHelper
+import com.withyou.app.utils.RecentlyPlayedManager
+import com.withyou.app.utils.RecentVideo
 
 /**
  * Solo Player Screen - Offline playback without room/sync logic
@@ -56,6 +58,9 @@ fun SoloPlayerScreen(
     val context = LocalContext.current
     val activity = context as? Activity
     val configuration = LocalConfiguration.current
+    
+    // Recently played manager for saving/resuming position
+    val recentlyPlayedManager = remember(context) { RecentlyPlayedManager(context) }
     
     // Rotation lock state
     var isRotationLocked by remember { mutableStateOf(false) }
@@ -147,9 +152,25 @@ fun SoloPlayerScreen(
         }
     }
     
-    // Cleanup system bars on exit
+    // Cleanup system bars on exit AND save video position to recently played
     DisposableEffect(Unit) {
         onDispose {
+            // Save to recently played
+            val position = playerUiState.position
+            val duration = playerUiState.duration
+            if (duration > 0 && position > 5000) { // Only save if played more than 5 seconds
+                recentlyPlayedManager.saveRecentVideo(
+                    RecentVideo(
+                        uri = videoUri.toString(),
+                        name = videoName,
+                        duration = duration,
+                        position = position,
+                        lastPlayed = System.currentTimeMillis()
+                    )
+                )
+                Timber.d("Saved video position: $position / $duration for $videoName")
+            }
+            
             activity?.let { act ->
                 val window = act.window
                 val insetsController = WindowCompat.getInsetsController(window, window.decorView)

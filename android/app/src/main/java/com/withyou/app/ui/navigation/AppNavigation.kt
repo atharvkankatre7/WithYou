@@ -75,6 +75,9 @@ fun AppNavigation() {
                         navController.popBackStack()
                     }
                 },
+                onNavigateToRoom = { roomId, isHost ->
+                    navController.navigate("room/$roomId/$isHost")
+                },
                 onVideoSelected = { uri ->
                     // Navigate to video player screen with options
                     // Encode URI for navigation (URL encoding)

@@ -15,6 +15,9 @@ import android.util.Rational
 import android.view.View
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.withyou.app.utils.LastRoomManager
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -88,6 +91,31 @@ fun RoomScreen(
     // Debounce job for double tap seeks to prevent spamming
     var doubleTapSeekJob by remember { mutableStateOf<Job?>(null) }
     var pendingSeekSeconds by remember { mutableIntStateOf(0) }
+    
+    // File picker for Re-Sync
+    // We need this because if the app was killed, we lost the file access permission
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.loadVideo(uri)
+        }
+    }
+    
+    // Manage Re-Sync state
+    val lastRoomManager = remember(context) { LastRoomManager(context) }
+    val lastRoomInfo = remember { lastRoomManager.getLastRoom() }
+    var isReSyncing by remember { mutableStateOf(false) }
+
+    // Auto-trigger re-sync in RoomViewModel when file is loaded AND we are in re-sync mode
+    val roomUiState by viewModel.uiState.collectAsState()
+    LaunchedEffect(roomUiState, isReSyncing) {
+        if (isReSyncing && roomUiState is com.withyou.app.viewmodel.RoomUiState.FileLoaded) {
+            Timber.i("Re-Sync: File loaded, triggering reSyncRoom")
+            viewModel.reSyncRoom(roomId, lastRoomInfo?.videoId)
+            isReSyncing = false
+        }
+    }
     
     // Create VideoPlayerViewModel for player control
     // This manages PlayerEngine and exposes PlayerUiState
@@ -194,7 +222,9 @@ fun RoomScreen(
     // Collect partner reactions from ViewModel and display them
     val partnerReaction by viewModel.partnerReaction.collectAsState()
     LaunchedEffect(partnerReaction) {
-        partnerReaction?.let { emoji ->
+        partnerReaction?.let { reactionType ->
+            // Map the reaction type (e.g., "party") to the actual emoji character (e.g., "🎉")
+            val emoji = availableReactions.find { it.name == reactionType }?.emoji ?: reactionType
             // Add partner's emoji with partner color
             floatingReactions = floatingReactions + FloatingReaction(
                 emoji = emoji,
@@ -716,11 +746,9 @@ fun RoomScreen(
             }
         }
     } else {
-        // Portrait layout: Video on top, Chat overlay below
+        // Portrait layout: Video stacked on top of chat
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black)
+            modifier = Modifier.fillMaxSize()
         ) {
             // Video section - ALWAYS rendered, shrinks when chat opens
             // CRITICAL: key() ensures the video player composition is NEVER recreated
@@ -885,6 +913,42 @@ fun RoomScreen(
                     )
                 }
             }
+        }
+    }
+    
+    // Re-Sync / Disconnected Overlay
+    // Uses a full-screen Dialog to ensure it covers everything including system bars
+    // Show when:
+    // 1. Socket is disconnected (can happen while RoomReady if connection drops)
+    // 2. UiState is Idle (fresh launch without established room connection)
+    // Don't show during JoiningRoom (in progress) or if Leave dialog is showing
+    val isDisconnected = connectionStatus == "Disconnected" || connectionStatus.contains("Disconnected")
+    val isIdle = roomUiState is com.withyou.app.viewmodel.RoomUiState.Idle
+    val isJoining = roomUiState is com.withyou.app.viewmodel.RoomUiState.JoiningRoom
+    
+    val showReSyncOverlay = (isDisconnected || isIdle) && !showLeaveDialog && !isJoining
+                            
+    if (showReSyncOverlay) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { /* Prevent dismiss */ },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false, // Full screen
+                dismissOnBackPress = false
+            )
+        ) {
+            ReSyncOverlay(
+                roomId = roomId,
+                onReSync = {
+                    // Check if we need to load file first
+                    if (viewModel.fileMetadata == null) {
+                        isReSyncing = true
+                        filePicker.launch("video/*")
+                    } else {
+                        viewModel.reSyncRoom(roomId, lastRoomInfo?.videoId)
+                    }
+                },
+                onLeave = onNavigateBack
+            )
         }
     }
     
@@ -1582,4 +1646,73 @@ private fun buildAudioLabel(language: String?, channels: Int, mimeType: String?)
     }
     
     return if (parts.isEmpty()) "Audio" else parts.joinToString(" • ")
+}
+
+@Composable
+private fun ReSyncOverlay(
+    roomId: String,
+    onReSync: () -> Unit,
+    onLeave: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.85f))
+            .pointerInput(Unit) { detectTapGestures { /* consume clicks */ } },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(32.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.SignalWifiOff,
+                contentDescription = null,
+                tint = RosePrimary,
+                modifier = Modifier.size(64.dp)
+            )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            Text(
+                text = "Disconnected",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = "Room: $roomId",
+                style = MaterialTheme.typography.bodyMedium,
+                color = OnDarkSecondary
+            )
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            Button(
+                onClick = onReSync,
+                colors = ButtonDefaults.buttonColors(containerColor = RosePrimary),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Re-Sync & Resume")
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            OutlinedButton(
+                onClick = onLeave,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha=0.3f)),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text("Leave Room")
+            }
+        }
+    }
 }

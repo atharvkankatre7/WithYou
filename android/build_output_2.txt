@@ -1,0 +1,71 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by net.rubygrapefruit.platform.internal.NativeLibraryLoader in an unnamed module (file:/C:/Users/kanka/.gradle/wrapper/dists/gradle-8.6-bin/afr5mpiioh2wthjmwnkmdsd5w/gradle-8.6/lib/native-platform-0.22-milestone-25.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+Reusing configuration cache.
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:processDebugGoogleServices UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:kaptGenerateStubsDebugKotlin
+> Task :app:kaptDebugKotlin SKIPPED
+
+> Task :app:compileDebugKotlin
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:237:20 Parameter 'videoLayout' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:681:13 'when' is exhaustive so 'else' is redundant here
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:691:41 Parameter 'roomId' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:699:39 Parameter 'roomId' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:737:22 Parameter 'mode' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:737:62 Parameter 'surfaceWidth' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:737:85 Parameter 'surfaceHeight' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:745:30 Parameter 'ratio' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:781:23 Parameter 'trackId' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:789:26 Parameter 'trackId' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:797:21 Parameter 'seconds' is never used
+w: file:///C:/Users/kanka/OneDrive/Desktop/ContentSync/android/app/src/main/java/com/withyou/app/viewmodel/RoomViewModel.kt:805:22 Parameter 'seconds' is never used
+
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugGlobalSynthetics UP-TO-DATE
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:assembleDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+
+BUILD SUCCESSFUL in 1m 1s
+40 actionable tasks: 6 executed, 34 up-to-date
+Configuration cache entry reused.

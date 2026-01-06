@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
@@ -73,6 +75,7 @@ fun MediaLibraryScreen(
     roomViewModel: RoomViewModel,
     mediaLibraryViewModel: MediaLibraryViewModel = viewModel(),
     onNavigateBack: () -> Unit = {},
+    onNavigateToRoom: (String, Boolean) -> Unit = { _, _ -> },
     onVideoSelected: (Uri) -> Unit
 ) {
     val context = LocalContext.current
@@ -84,6 +87,39 @@ fun MediaLibraryScreen(
     
     var selectedGroup by remember { mutableStateOf<VideoGroup?>(null) }
     var searchQuery by remember { mutableStateOf("") }
+    
+    // Recently played manager
+    val recentlyPlayedManager = remember(context) { RecentlyPlayedManager(context) }
+    val recentVideos = remember { mutableStateOf(recentlyPlayedManager.getRecentVideos()) }
+    
+    // Auto-navigate to re-sync if last room exists on first load
+    val lastRoomManager = remember(context) { LastRoomManager(context) }
+    var hasCheckedLastRoom by remember { mutableStateOf(false) }
+    var isValidatingRoom by remember { mutableStateOf(false) }
+    
+    LaunchedEffect(Unit) {
+        if (!hasCheckedLastRoom) {
+            hasCheckedLastRoom = true
+            val lastRoom = lastRoomManager.getLastRoom()
+            if (lastRoom != null) {
+                Timber.i("Found last room: ${lastRoom.roomId}, validating with server...")
+                isValidatingRoom = true
+                
+                // Validate room exists on server before navigating
+                val roomExists = com.withyou.app.network.ApiClient.checkRoomExists(lastRoom.roomId)
+                isValidatingRoom = false
+                
+                if (roomExists) {
+                    Timber.i("Room ${lastRoom.roomId} is active, navigating for Re-Sync")
+                    onNavigateToRoom(lastRoom.roomId, lastRoom.role == "host")
+                } else {
+                    // Room is invalid/expired - clear cache to prevent loop
+                    Timber.w("Room ${lastRoom.roomId} is no longer active, clearing cache")
+                    lastRoomManager.clearLastRoom()
+                }
+            }
+        }
+    }
     
     // Request permissions for Android 13+
     val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -348,6 +384,19 @@ fun MediaLibraryScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
+                        // Recently Played Section
+                        if (recentVideos.value.isNotEmpty()) {
+                            item {
+                                RecentlyPlayedSection(
+                                    recentVideos = recentVideos.value,
+                                    onVideoClick = { recentVideo ->
+                                        val uri = android.net.Uri.parse(recentVideo.uri)
+                                        onVideoSelected(uri)
+                                    }
+                                )
+                            }
+                        }
+                        
                         // Filter groups by search query
                         val filteredGroups = if (searchQuery.isBlank()) {
                             sortedGroups
@@ -942,3 +991,189 @@ private fun VideoListItem(
     }
 }
 
+/**
+ * Recently Played Section - Horizontal scrollable list of recently played videos
+ */
+@Composable
+private fun RecentlyPlayedSection(
+    recentVideos: List<RecentVideo>,
+    onVideoClick: (RecentVideo) -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Continue Watching",
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "${recentVideos.size} videos",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+        }
+        
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(recentVideos) { video ->
+                RecentVideoCard(
+                    video = video,
+                    onClick = { onVideoClick(video) }
+                )
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        HorizontalDivider(
+            color = Color.White.copy(alpha = 0.1f),
+            thickness = 1.dp
+        )
+    }
+}
+
+/**
+ * Card for a recently played video with progress indicator
+ */
+@Composable
+private fun RecentVideoCard(
+    video: RecentVideo,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var thumbnailBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    
+    // Load thumbnail
+    LaunchedEffect(video.uri) {
+        scope.launch {
+            val uri = android.net.Uri.parse(video.uri)
+            thumbnailBitmap = ThumbnailExtractor.getThumbnailFromCache(context, uri)
+                ?: ThumbnailExtractor.extractThumbnail(context, uri)
+        }
+    }
+    
+    // Calculate progress
+    val progress = if (video.duration > 0) {
+        (video.position.toFloat() / video.duration.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+    
+    Card(
+        modifier = Modifier
+            .width(160.dp)
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = CardDark),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column {
+            // Thumbnail with play progress
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(90.dp)
+                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                    .background(Color.Gray.copy(alpha = 0.3f))
+            ) {
+                if (thumbnailBitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = thumbnailBitmap!!.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.VideoLibrary,
+                            contentDescription = null,
+                            tint = Color.Gray,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+                
+                // Play icon overlay
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.6f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = "Play",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                
+                // Duration remaining badge
+                val remainingMs = video.duration - video.position
+                if (remainingMs > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp)
+                            .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "${formatRecentDuration(remainingMs)} left",
+                            color = Color.White,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+                
+                // Progress bar at bottom
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .align(Alignment.BottomCenter),
+                    color = RosePrimary,
+                    trackColor = Color.Black.copy(alpha = 0.5f)
+                )
+            }
+            
+            // Video name
+            Text(
+                text = video.name,
+                color = Color.White,
+                fontSize = 12.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(8.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Format duration in milliseconds to human-readable string
+ */
+private fun formatRecentDuration(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    
+    return if (hours > 0) {
+        "${hours}h ${minutes}m"
+    } else {
+        "${minutes}m"
+    }
+}

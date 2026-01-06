@@ -57,13 +57,6 @@ fun HomeScreen(
     var joinRoomId by remember { mutableStateOf("") }
     var pendingJoinRoomId by remember { mutableStateOf<String?>(null) }
     
-    // State for Re-Sync
-    // Use remember because we don't want to re-read prefs on every recomposition
-    // but allow updating when dismiss/clear happens
-    val lastRoomManager = remember { LastRoomManager(context) }
-    var lastRoomInfo by remember { mutableStateOf(lastRoomManager.getLastRoom()) }
-    var pendingReSyncRoom by remember { mutableStateOf<LastRoomInfo?>(null) }
-    
     // Request permissions for video access (Android 13+)
     val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         listOf(Manifest.permission.READ_MEDIA_VIDEO)
@@ -106,15 +99,6 @@ fun HomeScreen(
             val isHost = viewModel.isHost.value
             onNavigateToRoom(state.roomId, isHost)
         }
-        
-        // Auto-trigger re-sync when file is loaded if we have a pending re-sync
-        if (uiState is RoomUiState.FileLoaded && pendingReSyncRoom != null) {
-            val room = pendingReSyncRoom!!
-            Timber.i("File loaded for re-sync - calling reSyncRoom")
-            viewModel.reSyncRoom(room.roomId, room.videoId)
-            // Note: We don't clear pendingReSyncRoom immedately to avoid race conditions,
-            // but the state change to JoiningRoom will prevent re-triggering
-        }
     }
     
     Box(
@@ -144,24 +128,12 @@ fun HomeScreen(
                 is RoomUiState.Idle -> {
                     WelcomeContent(
                         isVisible = isVisible,
-                        lastRoomInfo = lastRoomInfo,
                         onCreateRoom = { 
                             pendingJoinRoomId = null
-                            pendingReSyncRoom = null
                             filePicker.launch("video/*") 
                         },
                         onJoinRoom = { showJoinDialog = true },
-                        onNavigateToMediaLibrary = onNavigateToMediaLibrary,
-                        onReSync = { info ->
-                            pendingReSyncRoom = info
-                            // Launch file picker to ensure user has the file
-                            // Logic handles re-sync call once file is loaded
-                            filePicker.launch("video/*")
-                        },
-                        onDismissReSync = {
-                            lastRoomManager.clearLastRoom()
-                            lastRoomInfo = null
-                        }
+                        onNavigateToMediaLibrary = onNavigateToMediaLibrary
                     )
                 }
             is RoomUiState.LoadingFile -> {
@@ -323,12 +295,9 @@ private fun AnimatedBackgroundElements() {
 @Composable
 private fun WelcomeContent(
     isVisible: Boolean,
-    lastRoomInfo: LastRoomInfo?,
     onCreateRoom: () -> Unit,
     onJoinRoom: () -> Unit,
-    onNavigateToMediaLibrary: () -> Unit = {},
-    onReSync: (LastRoomInfo) -> Unit = {},
-    onDismissReSync: () -> Unit = {}
+    onNavigateToMediaLibrary: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -382,22 +351,8 @@ private fun WelcomeContent(
         
         Spacer(modifier = Modifier.height(48.dp))
         
-        // Re-Sync Banner (if available)
-        AnimatedVisibility(
-            visible = isVisible && lastRoomInfo != null,
-            enter = fadeIn(animationSpec = tween(500, delayMillis = 500)) + 
-                   slideInVertically(initialOffsetY = { 50 })
-        ) {
-            lastRoomInfo?.let { info ->
-                ReSyncBanner(
-                    info = info,
-                    onReSync = { onReSync(info) },
-                    onDismiss = onDismissReSync
-                )
-            }
-        }
         
-        Spacer(modifier = Modifier.height(16.dp))
+        // Create Room button
         
         // Create Room button
         AnimatedVisibility(
@@ -1493,87 +1448,4 @@ private fun PermissionRequestContent(
     }
 }
 
-/**
- * Banner for re-syncing to previous room
- */
-@Composable
-private fun ReSyncBanner(
-    info: LastRoomInfo,
-    onReSync: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize(),
-        colors = CardDefaults.cardColors(
-            containerColor = SurfaceDark.copy(alpha = 0.9f)
-        ),
-        shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, RosePrimary.copy(alpha = 0.5f))
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(RosePrimary.copy(alpha=0.2f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.History,
-                        contentDescription = null,
-                        tint = RosePrimary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-                
-                Spacer(modifier = Modifier.width(12.dp))
-                
-                Column {
-                    Text(
-                        text = "Recent Room Found",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Resume ${if(info.role == "host") "hosting" else "watching"} (${info.roomId})",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = OnDarkSecondary
-                    )
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                OutlinedButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = OnDarkSecondary),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, OnDarkSecondary.copy(alpha = 0.3f))
-                ) {
-                    Text("Dismiss")
-                }
-                
-                Button(
-                    onClick = onReSync,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = RosePrimary)
-                ) {
-                    Text("Re-Sync")
-                }
-            }
-        }
-    }
-}
+

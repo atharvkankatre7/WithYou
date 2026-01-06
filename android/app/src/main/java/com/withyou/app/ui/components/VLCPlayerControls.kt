@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.withyou.app.ui.components
 
 import androidx.compose.animation.*
@@ -6,7 +8,9 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -47,6 +51,7 @@ import com.withyou.app.ui.theme.RosePrimary
  * This version accepts PlayerUiState for cleaner integration with VideoPlayerViewModel.
  * Maps to: VLC's VideoPlayerOverlayDelegate managing player_hud.xml
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VLCPlayerControls(
     uiState: com.withyou.app.player.PlayerUiState,
@@ -150,16 +155,25 @@ fun VLCPlayerControls(
     var sliderPosition by remember { mutableFloatStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
     
+    // Use derivedStateOf to calculate target position without causing recomposition
+    val targetPosition by remember(currentPosition, duration) {
+        derivedStateOf {
+            if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f
+        }
+    }
+    
     // Multi-tap seek state
     var forwardTapCount by remember { mutableIntStateOf(0) }
     var backwardTapCount by remember { mutableIntStateOf(0) }
     var showForwardIndicator by remember { mutableStateOf(false) }
     var showBackwardIndicator by remember { mutableStateOf(false) }
     
-    // Update slider when not dragging
-    LaunchedEffect(currentPosition, duration) {
-        if (!isDragging && duration > 0) {
-            sliderPosition = currentPosition.toFloat() / duration.toFloat()
+    // Update slider position smoothly when not dragging
+    // Only update when targetPosition actually changes significantly
+    LaunchedEffect(targetPosition, isDragging) {
+        if (!isDragging) {
+            // Smooth interpolation for non-dragging updates
+            sliderPosition = targetPosition
         }
     }
     
@@ -246,7 +260,17 @@ fun VLCPlayerControls(
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 
-                // Custom slider with VLC-style design
+                // Custom slider with enhanced touch target and VLC-style design
+                val interactionSource = remember { MutableInteractionSource() }
+                val thumbScale by animateFloatAsState(
+                    targetValue = if (isDragging) 1.4f else 1f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    ),
+                    label = "thumbScale"
+                )
+                
                 Slider(
                     value = sliderPosition,
                     onValueChange = { value ->
@@ -284,16 +308,45 @@ fun VLCPlayerControls(
                         onUserInteractionEnd()
                     },
                     enabled = controlsEnabled, // Disabled if not host or locked
-                    colors = SliderDefaults.colors(
-                        thumbColor = RosePrimary,
-                        activeTrackColor = RosePrimary,
-                        inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                        disabledThumbColor = Color.Gray,
-                        disabledActiveTrackColor = Color.Gray
-                    ),
+                    interactionSource = interactionSource,
+                    thumb = {
+                        // Custom larger thumb for easier touch
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp) // Large touch area
+                                .offset(y = (-12).dp) // Center vertically
+                                .padding(12.dp), // Visual padding
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size((16 * thumbScale).dp) // Animated visual thumb
+                                    .clip(CircleShape)
+                                    .background(if (controlsEnabled) RosePrimary else Color.Gray)
+                            )
+                        }
+                    },
+                    track = { _ ->
+                        // Custom track with better visibility - use sliderPosition for smoothness
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp) // Thicker track
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(Color.White.copy(alpha = 0.3f))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(sliderPosition.coerceIn(0f, 1f))
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(if (controlsEnabled) RosePrimary else Color.Gray)
+                            )
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(sliderHeight)      // Responsive touch target
+                        .height(48.dp) // Large touch target height
                         .padding(vertical = 4.dp)
                 )
             }

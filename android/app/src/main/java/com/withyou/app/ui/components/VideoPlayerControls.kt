@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,6 +28,7 @@ import kotlinx.coroutines.delay
 /**
  * Custom video player controls with modern design
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoPlayerControls(
     isPlaying: Boolean,
@@ -48,10 +50,17 @@ fun VideoPlayerControls(
     var sliderPosition by remember { mutableFloatStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
     
-    // Update slider when not dragging
-    LaunchedEffect(currentPosition, duration) {
-        if (!isDragging && duration > 0) {
-            sliderPosition = currentPosition.toFloat() / duration.toFloat()
+    // Use derivedStateOf to calculate target position without causing recomposition
+    val targetPosition by remember(currentPosition, duration) {
+        derivedStateOf {
+            if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f
+        }
+    }
+    
+    // Update slider position smoothly when not dragging
+    LaunchedEffect(targetPosition, isDragging) {
+        if (!isDragging) {
+            sliderPosition = targetPosition
         }
     }
     
@@ -91,7 +100,17 @@ fun VideoPlayerControls(
             
             Spacer(modifier = Modifier.height(4.dp))
             
-            // Custom slider
+            // Custom slider with enhanced touch target
+            val interactionSource = remember { MutableInteractionSource() }
+            val thumbScale by animateFloatAsState(
+                targetValue = if (isDragging) 1.4f else 1f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                ),
+                label = "thumbScale"
+            )
+            
             Slider(
                 value = sliderPosition,
                 onValueChange = { value ->
@@ -104,16 +123,45 @@ fun VideoPlayerControls(
                     onSeek(newPosition)
                 },
                 enabled = isHost,
-                colors = SliderDefaults.colors(
-                    thumbColor = Color(0xFFE91E63),
-                    activeTrackColor = Color(0xFFE91E63),
-                    inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                    disabledThumbColor = Color.Gray,
-                    disabledActiveTrackColor = Color.Gray
-                ),
+                interactionSource = interactionSource,
+                thumb = {
+                    // Custom larger thumb for easier touch
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp) // Large touch area
+                            .offset(y = (-12).dp) // Center vertically
+                            .padding(12.dp), // Visual padding
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size((16 * thumbScale).dp) // Animated visual thumb
+                                .clip(CircleShape)
+                                .background(if (isHost) Color(0xFFE91E63) else Color.Gray)
+                        )
+                    }
+                },
+                track = { _ ->
+                    // Custom track with better visibility - use sliderPosition for smoothness
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp) // Thicker track
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(Color.White.copy(alpha = 0.3f))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(sliderPosition.coerceIn(0f, 1f))
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(if (isHost) Color(0xFFE91E63) else Color.Gray)
+                        )
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(24.dp)
+                    .height(48.dp) // Large touch target height
             )
         }
         
